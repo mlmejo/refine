@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/mlmejo/refine/internal/draft"
+	"github.com/mlmejo/refine/internal/gitsync"
 	"github.com/mlmejo/refine/internal/jira"
 )
 
@@ -39,6 +40,11 @@ type Refiner struct {
 	// Move puts a written ticket in ReadySprint.
 	Move        func(ctx context.Context, key string) error
 	ReadySprint string
+	// Check compares the repos Claude reads with origin before a fresh brief
+	// or draft; Pull fast-forwards one that is behind. Check is nil when the
+	// repos are read at --ref, which already reads origin.
+	Check func(ctx context.Context) []gitsync.Status
+	Pull  func(ctx context.Context, s gitsync.Status) error
 }
 
 // writtenMsg is how writing went. children are the split tickets created so
@@ -194,7 +200,7 @@ func (m Model) updateRefine(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickElapsed(m.runID)
 
 	case spinner.TickMsg:
-		if m.screen != drafting && m.screen != briefing {
+		if m.screen != drafting && m.screen != briefing && m.screen != checking {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -221,7 +227,7 @@ func (m Model) updateRefine(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if saved, ok := m.saved[m.issues[m.cursor].Key]; ok {
 					req.Previous = &saved
 				}
-				return m.startDraft(req)
+				return m.gate(&req)
 			}
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
@@ -253,6 +259,9 @@ func (m Model) startDraft(req draft.Request) (tea.Model, tea.Cmd) {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.runID++
 	m.cancel, m.started, m.resuming, m.fromBrief = cancel, time.Now(), req.Resume, req.Brief != nil
+	if req.Resume {
+		m.syncNotes = nil
+	}
 	m.screen, m.draftErr = drafting, nil
 	m.input.Blur()
 
@@ -322,7 +331,7 @@ func (m Model) viewDrafting() string {
 			m.spin.View() + " Claude is revising the draft with your answers… " + elapsed.String() + "\n" +
 			quietStyle.Render("Picks up the earlier session, so it rereads little code.") + "\n"
 	}
-	return m.withFooter(body, "esc cancel")
+	return m.withFooter(body+m.syncLines(), "esc cancel")
 }
 
 // hang wraps text after a marker, indenting following lines under the text.

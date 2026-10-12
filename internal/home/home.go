@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/mlmejo/refine/internal/draft"
+	"github.com/mlmejo/refine/internal/gitsync"
 	"github.com/mlmejo/refine/internal/jira"
 )
 
@@ -65,6 +66,8 @@ const (
 	drafted
 	briefing
 	briefed
+	checking
+	stale
 )
 
 type loadedMsg struct {
@@ -110,6 +113,17 @@ type Model struct {
 	pane      viewport.Model
 	resuming  bool
 	fromBrief bool
+
+	// Checking the repos against origin before Claude reads them: the brief
+	// (nil) or draft waiting on it, the screen it was asked from, repos behind
+	// origin, pulls declined by origin commit, and notes shown while Claude works.
+	pending   *draft.Request
+	syncBack  screen
+	pulling   bool
+	stale     []gitsync.Status
+	declined  map[string]string
+	syncNotes []string
+	syncErr   error
 
 	// The draft screen: cursor stop, open split ticket (-1 for none), answer input.
 	focus     int
@@ -171,6 +185,7 @@ func New(title string, source Source, refiner Refiner) Model {
 		refiner:  refiner,
 		saved:    map[string]draft.Saved{},
 		briefs:   map[string]draft.SavedBrief{},
+		declined: map[string]string{},
 		input:    newInput(),
 		side:     -1,
 		answerIn: newAnswerInput(),
@@ -303,6 +318,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case movedMsg:
 		return m.moved(msg), nil
 
+	case checkedMsg:
+		return m.checked(msg)
+
+	case pulledMsg:
+		return m.pulled(msg)
+
 	case draftedMsg, briefedMsg, elapsedMsg, exportedMsg, answerSavedMsg, writtenMsg, spinner.TickMsg:
 		return m.updateRefine(msg)
 
@@ -318,6 +339,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateDetail(msg)
 		case approach, drafting, drafted, briefing, briefed:
 			return m.updateRefine(msg)
+		case checking, stale:
+			return m.updateSync(msg)
 		}
 		return m.updateList(msg)
 	}
@@ -383,7 +406,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if _, ok := m.briefs[m.issues[m.cursor].Key]; ok {
 			return m.openBrief(), nil
 		}
-		return m.startBrief()
+		return m.gate(nil)
 	case "d":
 		if _, ok := m.saved[m.issues[m.cursor].Key]; ok {
 			return m.openDraft(), nil
@@ -438,6 +461,10 @@ func (m Model) View() string {
 		return m.viewDrafting()
 	case drafted:
 		return m.viewDrafted()
+	case checking:
+		return m.viewChecking()
+	case stale:
+		return m.viewStale()
 	}
 	return m.viewList()
 }

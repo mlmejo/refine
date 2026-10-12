@@ -5,14 +5,18 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/mlmejo/refine/internal/config"
 	"github.com/mlmejo/refine/internal/draft"
+	"github.com/mlmejo/refine/internal/gitsync"
 	"github.com/mlmejo/refine/internal/hidden"
 	"github.com/mlmejo/refine/internal/home"
 	"github.com/mlmejo/refine/internal/jira"
@@ -220,12 +224,39 @@ func run() error {
 		ReadySprint: cfg.Jira.ReadySprint,
 	}
 
+	// Read as checked out, the repos may lag origin; at --ref they are read
+	// from origin already.
+	if *ref == "" {
+		refiner.Check = func(ctx context.Context) []gitsync.Status {
+			return checkRepos(ctx, cfg.Repos)
+		}
+		refiner.Pull = gitsync.Pull
+	}
+
 	title := cfg.Jira.Sprint
 	if *ref != "" {
 		title += " · repos at " + *ref
 	}
 	_, err = tea.NewProgram(home.New(title, source, refiner), tea.WithAltScreen()).Run()
 	return err
+}
+
+// syncBranch is the branch whose checkout is compared with origin before
+// Claude reads it.
+const syncBranch = "develop"
+
+// checkRepos compares each repo with origin at once, in name order.
+func checkRepos(ctx context.Context, repos map[string]string) []gitsync.Status {
+	names := slices.Sorted(maps.Keys(repos))
+	statuses := make([]gitsync.Status, len(names))
+	var wg sync.WaitGroup
+	for i, name := range names {
+		wg.Go(func() {
+			statuses[i] = gitsync.Check(ctx, name, repos[name], syncBranch)
+		})
+	}
+	wg.Wait()
+	return statuses
 }
 
 // checkout returns the repos to read: as they are, or each at ref in a

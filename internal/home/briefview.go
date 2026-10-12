@@ -85,10 +85,10 @@ func (m Model) updateBrief(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "a":
 		return m.openApproach()
 	case "R":
-		return m.startBrief()
+		return m.gate(nil)
 	case "b":
 		if _, ok := m.briefs[m.issues[m.cursor].Key]; !ok {
-			return m.startBrief()
+			return m.gate(nil)
 		}
 	}
 	var cmd tea.Cmd
@@ -100,7 +100,8 @@ func (m Model) viewBriefing() string {
 	elapsed := time.Since(m.started).Truncate(time.Second)
 	body := m.ticketHeader() + "\n\n" +
 		m.spin.View() + " Claude is reading the code to brief you… " + elapsed.String() + "\n" +
-		quietStyle.Render("Usually about 2 minutes. The draft continues this session, so the code is read once.") + "\n"
+		quietStyle.Render("Usually about 2 minutes. The draft continues this session, so the code is read once.") + "\n" +
+		m.syncLines()
 	return m.withFooter(body, "esc cancel")
 }
 
