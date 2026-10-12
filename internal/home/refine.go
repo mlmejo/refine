@@ -3,6 +3,8 @@ package home
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -29,17 +31,25 @@ type Refiner struct {
 	// Write puts the draft in the ticket's refinement fields and returns the
 	// ticket as Jira now has it.
 	Write func(ctx context.Context, key string, d draft.Draft) (jira.Issue, error)
+	// Split creates the draft's split tickets that saved.Children does not
+	// have yet, keeping each key as it goes. It returns the keys of every
+	// split ticket created so far, by index into Draft.Split, even when it
+	// fails partway.
+	Split func(ctx context.Context, saved draft.Saved) (map[int]string, error)
 	// Move puts a written ticket in ReadySprint.
 	Move        func(ctx context.Context, key string) error
 	ReadySprint string
 }
 
-// writtenMsg is how writing went; moveErr is set when the ticket was written
-// but could not be moved.
+// writtenMsg is how writing went. children are the split tickets created so
+// far; splitErr is set when the ticket was written but not every split ticket
+// was created, and moveErr when it could not be moved.
 type writtenMsg struct {
-	issue   jira.Issue
-	err     error
-	moveErr error
+	issue    jira.Issue
+	err      error
+	children map[int]string
+	splitErr error
+	moveErr  error
 }
 
 type exportedMsg struct {
@@ -55,6 +65,16 @@ type draftedMsg struct {
 
 type elapsedMsg struct {
 	runID int
+}
+
+// childKeys lists split ticket keys in split order.
+func childKeys(children map[int]string) string {
+	indexes := slices.Sorted(maps.Keys(children))
+	keys := make([]string, 0, len(indexes))
+	for _, i := range indexes {
+		keys = append(keys, children[i])
+	}
+	return strings.Join(keys, ", ")
 }
 
 func newInput() textarea.Model {
@@ -133,10 +153,18 @@ func (m Model) updateRefine(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		key := msg.issue.Key
-		m.screen, m.done, m.failed = list, "written to "+key, nil
+		written := "written to " + key
+		if saved, ok := m.saved[key]; ok && len(msg.children) > 0 {
+			saved.Children = msg.children
+			m.saved[key] = saved
+			written += ", split into " + childKeys(msg.children)
+		}
+		m.screen, m.done, m.failed = list, written, nil
 		switch {
+		case msg.splitErr != nil:
+			m.done, m.failed = "", fmt.Errorf("%s, but could not create every split ticket, so it stays here; w again creates the rest: %w", written, msg.splitErr)
 		case msg.moveErr != nil:
-			m.done, m.failed = "", fmt.Errorf("written to %s, but could not move it to %s: %w", key, m.refiner.ReadySprint, msg.moveErr)
+			m.done, m.failed = "", fmt.Errorf("%s, but could not move it to %s: %w", written, m.refiner.ReadySprint, msg.moveErr)
 		case m.refiner.Move != nil:
 			// It has left the refinement sprint, so it leaves the list.
 			m.dropIssue(key)

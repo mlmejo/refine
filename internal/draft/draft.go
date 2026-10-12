@@ -66,6 +66,8 @@ type Child struct {
 	Points                  int         `json:"points"`
 	AcceptanceCriteria      []string    `json:"acceptance_criteria"`
 	TechnicalImplementation []RepoFiles `json:"technical_implementation"`
+	// StoryPointCriteria is empty on drafts made before children were rated.
+	StoryPointCriteria StoryPointCriteria `json:"story_point_criteria"`
 }
 
 // ApproachReview is Claude's check of the developer's approach.

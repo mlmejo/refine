@@ -100,7 +100,7 @@ func (m *Model) layoutDraft() {
 	m.keepFocusVisible()
 
 	if m.side >= 0 && m.side < len(saved.Draft.Split) {
-		m.sidePane.SetContent(renderChild(saved.Draft.Split[m.side], sideWidth))
+		m.sidePane.SetContent(renderChild(saved.Draft.Split[m.side], saved.Children[m.side], sideWidth))
 	}
 }
 
@@ -251,15 +251,39 @@ func (m Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.writing = true
-	saved, write, move := m.current(), m.refiner.Write, m.refiner.Move
+	saved, write, split, move := m.current(), m.refiner.Write, m.refiner.Split, m.refiner.Move
 	return m, func() tea.Msg {
 		ctx := context.Background()
 		issue, err := write(ctx, saved.Key, saved.Draft)
-		if err != nil || move == nil {
+		if err != nil {
 			return writtenMsg{issue: issue, err: err}
 		}
-		return writtenMsg{issue: issue, moveErr: move(ctx, saved.Key)}
+		msg := writtenMsg{issue: issue, children: saved.Children}
+		if split != nil && len(saved.Draft.Split) > 0 {
+			if msg.children, msg.splitErr = split(ctx, saved); msg.splitErr != nil {
+				return msg
+			}
+		}
+		if move != nil {
+			msg.moveErr = move(ctx, saved.Key)
+		}
+		return msg
 	}
+}
+
+// splitLeft counts the current draft's split tickets not created yet.
+func (m Model) splitLeft() int {
+	if m.refiner.Split == nil {
+		return 0
+	}
+	saved := m.current()
+	left := 0
+	for i := range saved.Draft.Split {
+		if saved.Children[i] == "" {
+			left++
+		}
+	}
+	return left
 }
 
 func (m Model) updateAnswer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -342,6 +366,9 @@ func (m Model) viewDrafted() string {
 		help = "enter save · esc cancel"
 	case m.confirming:
 		help = fmt.Sprintf("replace %s's Acceptance Criteria, Technical Implementation, Story Point Criteria and points (%d)", saved.Key, saved.Draft.Points)
+		if left := m.splitLeft(); left > 0 {
+			help += fmt.Sprintf(", create %d split ticket%s linked to it", left, plural(left))
+		}
 		if m.refiner.Move != nil {
 			help += " and move it to " + m.refiner.ReadySprint
 		}
@@ -484,8 +511,12 @@ func renderDraft(saved draft.Saved, width, focus int, answer string) (string, []
 
 	if len(d.Split) > 0 {
 		var split []string
-		for _, child := range d.Split {
-			line := strings.Split(hang("↗ ", fmt.Sprintf("%s · %d %s", child.Title, child.Points, pts(child.Points)), inner-1), "\n")
+		for i, child := range d.Split {
+			text := fmt.Sprintf("%s · %d %s", child.Title, child.Points, pts(child.Points))
+			if key := saved.Children[i]; key != "" {
+				text += " · " + key
+			}
+			line := strings.Split(hang("↗ ", text, inner-1), "\n")
 			if stop == focus {
 				line[0] = focusStyle.Render(line[0])
 			}
@@ -507,11 +538,15 @@ func renderDraft(saved draft.Saved, width, focus int, answer string) (string, []
 	return strings.Join(all, "\n"), spans
 }
 
-// renderChild lays out one split ticket for the side pane.
-func renderChild(child draft.Child, width int) string {
+// renderChild lays out one split ticket, and its key once created, for the side pane.
+func renderChild(child draft.Child, key string, width int) string {
 	inner := max(width-4, 10)
 	var lines []string
-	lines = append(lines, titleStyle.Render(fmt.Sprintf("%d %s", child.Points, pts(child.Points))), "")
+	head := fmt.Sprintf("%d %s", child.Points, pts(child.Points))
+	if key != "" {
+		head += " · created as " + key
+	}
+	lines = append(lines, titleStyle.Render(head), "")
 	lines = append(lines, titleStyle.Render("Acceptance Criteria"))
 	if len(child.AcceptanceCriteria) == 0 {
 		lines = append(lines, pendingStyle.Render("none"))
@@ -521,6 +556,12 @@ func renderChild(child draft.Child, width int) string {
 	}
 	lines = append(lines, "", titleStyle.Render("Technical Implementation"))
 	lines = append(lines, repoLines(child.TechnicalImplementation, inner)...)
+	if child.StoryPointCriteria.Rated() {
+		lines = append(lines, "", titleStyle.Render("Story Point Criteria"))
+		for _, row := range child.StoryPointCriteria.Rows() {
+			lines = append(lines, truncate(fmt.Sprintf("%-40s %s", row[0], row[1]), inner))
+		}
+	}
 	return strings.Join(box(child.Title, lines, width), "\n")
 }
 

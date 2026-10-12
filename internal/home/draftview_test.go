@@ -282,3 +282,87 @@ func TestWriteKeepsTheTicketWhenTheMoveFails(t *testing.T) {
 		t.Errorf("view:\n%s", m.View())
 	}
 }
+
+func TestWriteCreatesTheSplitTicketsBeforeMoving(t *testing.T) {
+	answered := sample
+	answered.Answers = map[string]string{}
+	for _, question := range sample.Draft.Questions() {
+		answered.Answers[question] = "no"
+	}
+	var steps []string
+	m := onDraft(t, Refiner{
+		Load: func(key string) (draft.Saved, bool, error) { return answered, key == "GEEK-1", nil },
+		Write: func(_ context.Context, key string, _ draft.Draft) (jira.Issue, error) {
+			steps = append(steps, "write")
+			return jira.Issue{Key: key}, nil
+		},
+		Split: func(_ context.Context, saved draft.Saved) (map[int]string, error) {
+			steps = append(steps, "split")
+			return map[int]string{0: "GEEK-9"}, nil
+		},
+		Move:        func(context.Context, string) error { steps = append(steps, "move"); return nil },
+		ReadySprint: "Ready",
+	}, 300)
+
+	m = press(t, m, "w")
+	if !strings.Contains(m.View(), "points (5), create 1 split ticket linked to it and move it to Ready? y/n") {
+		t.Fatalf("confirm:\n%s", m.View())
+	}
+	m = run(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if strings.Join(steps, ",") != "write,split,move" {
+		t.Errorf("steps = %v", steps)
+	}
+	if !strings.Contains(m.View(), "written to GEEK-1, split into GEEK-9 and moved to Ready") {
+		t.Errorf("view:\n%s", m.View())
+	}
+	if m.saved["GEEK-1"].Children[0] != "GEEK-9" {
+		t.Errorf("children = %v", m.saved["GEEK-1"].Children)
+	}
+}
+
+func TestWriteKeepsTheTicketWhenASplitTicketFails(t *testing.T) {
+	answered := sample
+	answered.Answers = map[string]string{}
+	for _, question := range sample.Draft.Questions() {
+		answered.Answers[question] = "no"
+	}
+	moved := false
+	m := onDraft(t, Refiner{
+		Load: func(key string) (draft.Saved, bool, error) { return answered, key == "GEEK-1", nil },
+		Write: func(_ context.Context, key string, _ draft.Draft) (jira.Issue, error) {
+			return jira.Issue{Key: key}, nil
+		},
+		Split: func(context.Context, draft.Saved) (map[int]string, error) {
+			return nil, errors.New("Purchase Tracking - Session Header: jira: 400 Bad Request")
+		},
+		Move:        func(context.Context, string) error { moved = true; return nil },
+		ReadySprint: "Ready",
+	}, 300)
+
+	m = run(t, press(t, m, "w"), tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if moved || indexOf(m.issues, "GEEK-1") < 0 {
+		t.Fatalf("moved %v issues %+v", moved, m.issues)
+	}
+	if !strings.Contains(m.View(), "could not create every split ticket") {
+		t.Errorf("view:\n%s", m.View())
+	}
+}
+
+func TestConfirmCountsOnlySplitTicketsNotCreatedYet(t *testing.T) {
+	answered := sample
+	answered.Answers = map[string]string{}
+	for _, question := range sample.Draft.Questions() {
+		answered.Answers[question] = "no"
+	}
+	answered.Children = map[int]string{0: "GEEK-9"}
+	m := onDraft(t, Refiner{
+		Load:  func(key string) (draft.Saved, bool, error) { return answered, key == "GEEK-1", nil },
+		Write: func(context.Context, string, draft.Draft) (jira.Issue, error) { return jira.Issue{}, nil },
+		Split: func(context.Context, draft.Saved) (map[int]string, error) { return nil, nil },
+	}, 300)
+
+	view := press(t, m, "w").View()
+	if strings.Contains(view, "create 1 split ticket") || !strings.Contains(view, "Purchase Tracking - Session Header · 1 pt · GEEK-9") {
+		t.Errorf("view:\n%s", view)
+	}
+}

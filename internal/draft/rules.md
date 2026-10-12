@@ -59,6 +59,7 @@ Example of the expected style (GEEK-11550):
 - Each child ticket is one behaviour a user can try, titled with the parent feature, a dash, then the behaviour, for example "Book Management - Adding Book" or "Book Management - Deleting Book".
 - A purely technical ticket of 3 points or less stands alone; it does not need behaviour children.
 - A child is usually 1 point and never more than 3. If a behaviour needs more, split it again.
+- Rate every child's Story Point Criteria on its own, the same way as the parent's, from the work that child adds on top of the parent. Its points follow from its ratings.
 - Write each child's Acceptance Criteria as user stories: "As a <role>, I want <action>, so that <benefit>." Cover who must not be able to do it, for example "As a regular user, I cannot delete books, because I do not have enough privileges."
 - The stories are for QA, who check that the feature works, not what its numbers mean. The role is whoever uses the screen in the product (for example "an admin"), never a job title like "retention analyst". The action is something QA can do and see; the benefit is short and plain.
 - Leave metric definitions and figures out of the stories: no medians, percentiles, rates, buckets or formulas. A story says the figure is shown; whether it is computed right is verified by tests and code review.

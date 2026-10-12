@@ -3,6 +3,8 @@ package draft
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -230,5 +232,46 @@ func TestFromBriefForksTheBriefSession(t *testing.T) {
 	args, _ := os.ReadFile(argsFile)
 	if !strings.HasPrefix(string(args), "--resume b-1 -p draft") || !strings.Contains(string(args), "--fork-session") || !strings.Contains(string(args), `"acceptance_criteria"`) {
 		t.Errorf("args: %s", args)
+	}
+}
+
+func TestCreateSplitSkipsCreatedChildrenAndKeepsEachKey(t *testing.T) {
+	saved := Saved{
+		Key:      "GEEK-1",
+		Draft:    Draft{Split: []Child{{Title: "A"}, {Title: "B"}, {Title: "C"}, {Title: "D"}}},
+		Children: map[int]string{0: "GEEK-10"},
+	}
+	var created []string
+	var kept []map[int]string
+	create := func(child Child) (string, error) {
+		created = append(created, child.Title)
+		switch child.Title {
+		case "B":
+			return "GEEK-11", nil
+		case "C":
+			return "GEEK-12", errors.New("could not set its points")
+		}
+		return "", errors.New("unreachable")
+	}
+	keep := func(s Saved) error {
+		kept = append(kept, s.Children)
+		return nil
+	}
+
+	children, err := CreateSplit(saved, create, keep)
+	if err == nil || err.Error() != "C: could not set its points" {
+		t.Errorf("err = %v", err)
+	}
+	if strings.Join(created, ",") != "B,C" {
+		t.Errorf("created %v; A was already created and D comes after the failure", created)
+	}
+	if fmt.Sprint(children) != "map[0:GEEK-10 1:GEEK-11 2:GEEK-12]" {
+		t.Errorf("children = %v", children)
+	}
+	if len(kept) != 2 || fmt.Sprint(kept[1]) != fmt.Sprint(children) {
+		t.Errorf("kept = %v", kept)
+	}
+	if len(saved.Children) != 1 {
+		t.Errorf("saved.Children changed: %v", saved.Children)
 	}
 }

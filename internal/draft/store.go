@@ -3,6 +3,8 @@ package draft
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -28,6 +30,9 @@ type Saved struct {
 	Markdown string `json:"markdown,omitempty"`
 	// Answers are the team's answers, keyed by question.
 	Answers map[string]string `json:"answers,omitempty"`
+	// Children are the Jira keys of the split tickets already created from
+	// this draft, by index into Draft.Split.
+	Children map[int]string `json:"children,omitempty"`
 }
 
 // Questions are the deploy blockers and open questions the team must answer.
@@ -85,4 +90,31 @@ func (s Store) Load(key string) (Saved, bool, error) {
 
 func (s Store) path(key string) string {
 	return filepath.Join(s.Dir, filepath.Base(key)+".json")
+}
+
+// CreateSplit creates each split ticket that saved.Children lacks, in order,
+// and keeps the draft after each one so a retry never creates a ticket twice.
+// It returns the keys of every split ticket created so far, even on error.
+func CreateSplit(saved Saved, create func(Child) (string, error), keep func(Saved) error) (map[int]string, error) {
+	children := maps.Clone(saved.Children)
+	if children == nil {
+		children = map[int]string{}
+	}
+	for i, child := range saved.Draft.Split {
+		if children[i] != "" {
+			continue
+		}
+		key, err := create(child)
+		if key != "" {
+			children[i] = key
+			saved.Children = maps.Clone(children)
+			if keepErr := keep(saved); keepErr != nil && err == nil {
+				err = fmt.Errorf("created %s, but could not save its key: %w", key, keepErr)
+			}
+		}
+		if err != nil {
+			return children, fmt.Errorf("%s: %w", child.Title, err)
+		}
+	}
+	return children, nil
 }

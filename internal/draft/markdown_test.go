@@ -92,3 +92,24 @@ func TestRefinementIsPlainText(t *testing.T) {
 		t.Errorf("points = %d", got.Points)
 	}
 }
+
+func TestChildRefinementLeavesOutUnratedCriteria(t *testing.T) {
+	child := Child{
+		Title:                   "Books - Deleting",
+		Points:                  1,
+		AcceptanceCriteria:      []string{"As an admin, I want to delete books, so that the catalogue stays tidy."},
+		TechnicalImplementation: []RepoFiles{{Repo: "api", Files: []File{{Path: "app/Books.php"}}}},
+	}
+	got := child.Refinement()
+	if got.AcceptanceCriteria != "* As an admin, I want to delete books, so that the catalogue stays tidy." || got.TechnicalImplementation != "api\n\n* app/Books.php" || got.Points != 1 {
+		t.Errorf("refinement = %+v", got)
+	}
+	if got.StoryPointCriteria != "" {
+		t.Errorf("SPC = %q, want none for an unrated child", got.StoryPointCriteria)
+	}
+
+	child.StoryPointCriteria = StoryPointCriteria{Novelty: "Low", Risk: "Low", Dependency: "Low", Testing: "Low", Deployment: "Low", Total: "Low"}
+	if got := child.Refinement().StoryPointCriteria; !strings.HasSuffix(got, "\nTotal: Low") {
+		t.Errorf("SPC = %q", got)
+	}
+}

@@ -53,6 +53,25 @@ type Refinement struct {
 	Points                  int
 }
 
+// SplitTarget is what each split ticket copies from its parent: the project,
+// labels, priority and assignee, and the sprint it goes into.
+type SplitTarget struct {
+	Parent     string
+	Summary    string
+	Project    string
+	Labels     []string
+	PriorityID string
+	AssigneeID string
+	SprintID   int
+}
+
+// NewChild is one split ticket to create.
+type NewChild struct {
+	Summary     string
+	Description string
+	Refinement
+}
+
 // Comment is one comment on a ticket.
 type Comment struct {
 	Author string
@@ -221,11 +240,7 @@ func (c *Client) Update(ctx context.Context, key string, r Refinement) error {
 // MoveToSprint moves a ticket to the sprint with the given name, on the board
 // of the sprint the ticket is in now.
 func (c *Client) MoveToSprint(ctx context.Context, key, sprint string) error {
-	board, err := c.boardOf(ctx, key)
-	if err != nil {
-		return err
-	}
-	id, err := c.sprintID(ctx, board, sprint)
+	id, err := c.sprintOf(ctx, key, sprint)
 	if err != nil {
 		return err
 	}
@@ -234,6 +249,113 @@ func (c *Client) MoveToSprint(ctx context.Context, key, sprint string) error {
 		return err
 	}
 	return c.do(ctx, http.MethodPost, "/rest/agile/1.0/sprint/"+strconv.Itoa(id)+"/issue", body, nil)
+}
+
+// Split reads what split tickets of parent copy from it, with the id of the
+// named sprint on the parent's board.
+func (c *Client) Split(ctx context.Context, parent, sprint string) (SplitTarget, error) {
+	var raw struct {
+		Key    string `json:"key"`
+		Fields struct {
+			Summary string `json:"summary"`
+			Project struct {
+				Key string `json:"key"`
+			} `json:"project"`
+			Labels   []string `json:"labels"`
+			Priority *struct {
+				ID string `json:"id"`
+			} `json:"priority"`
+			Assignee *struct {
+				AccountID string `json:"accountId"`
+			} `json:"assignee"`
+		} `json:"fields"`
+	}
+	path := "/rest/api/3/issue/" + url.PathEscape(parent) + "?fields=summary,project,labels,priority,assignee"
+	if err := c.do(ctx, http.MethodGet, path, nil, &raw); err != nil {
+		return SplitTarget{}, err
+	}
+	id, err := c.sprintOf(ctx, parent, sprint)
+	if err != nil {
+		return SplitTarget{}, err
+	}
+	target := SplitTarget{
+		Parent:   raw.Key,
+		Summary:  raw.Fields.Summary,
+		Project:  raw.Fields.Project.Key,
+		Labels:   raw.Fields.Labels,
+		SprintID: id,
+	}
+	if raw.Fields.Priority != nil {
+		target.PriorityID = raw.Fields.Priority.ID
+	}
+	if raw.Fields.Assignee != nil {
+		target.AssigneeID = raw.Fields.Assignee.AccountID
+	}
+	return target, nil
+}
+
+// CreateChild creates a split ticket as a Task in the target's sprint, linked
+// to the parent with Relates rather than as a subtask, so a carried-over
+// child never holds the parent open. It returns the new key. Story points are
+// not on the create screen, so they are written after; when that fails the
+// ticket exists, and its key comes back with the error.
+func (c *Client) CreateChild(ctx context.Context, target SplitTarget, child NewChild) (string, error) {
+	fields := map[string]any{
+		"project":                    map[string]string{"key": target.Project},
+		"issuetype":                  map[string]string{"name": "Task"},
+		"summary":                    child.Summary,
+		"description":                child.Description,
+		FieldAcceptanceCriteria:      child.AcceptanceCriteria,
+		FieldTechnicalImplementation: child.TechnicalImplementation,
+		FieldSprint:                  target.SprintID,
+	}
+	if len(target.Labels) > 0 {
+		fields["labels"] = target.Labels
+	}
+	if child.StoryPointCriteria != "" {
+		fields[FieldStoryPointCriteria] = child.StoryPointCriteria
+	}
+	if target.PriorityID != "" {
+		fields["priority"] = map[string]string{"id": target.PriorityID}
+	}
+	if target.AssigneeID != "" {
+		fields["assignee"] = map[string]string{"accountId": target.AssigneeID}
+	}
+	body, err := json.Marshal(map[string]any{
+		"fields": fields,
+		"update": map[string]any{"issuelinks": []any{map[string]any{"add": map[string]any{
+			"type":         map[string]string{"name": "Relates"},
+			"outwardIssue": map[string]string{"key": target.Parent},
+		}}}},
+	})
+	if err != nil {
+		return "", err
+	}
+	var created struct {
+		Key string `json:"key"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/rest/api/2/issue", body, &created); err != nil {
+		return "", err
+	}
+
+	points, err := json.Marshal(map[string]any{"fields": map[string]any{FieldStoryPoints: child.Points}})
+	if err != nil {
+		return created.Key, err
+	}
+	if err := c.do(ctx, http.MethodPut, "/rest/api/2/issue/"+url.PathEscape(created.Key), points, nil); err != nil {
+		return created.Key, fmt.Errorf("created %s, but could not set its points: %w", created.Key, err)
+	}
+	return created.Key, nil
+}
+
+// sprintOf finds the open sprint with the given name on the board of the
+// ticket's latest sprint.
+func (c *Client) sprintOf(ctx context.Context, key, sprint string) (int, error) {
+	board, err := c.boardOf(ctx, key)
+	if err != nil {
+		return 0, err
+	}
+	return c.sprintID(ctx, board, sprint)
 }
 
 // boardOf is the board of the ticket's latest sprint.

@@ -193,6 +193,20 @@ func run() error {
 			ticket, err := client.GetTicket(ctx, key)
 			return ticket.Issue, err
 		},
+		Split: func(ctx context.Context, saved draft.Saved) (map[int]string, error) {
+			target, err := client.Split(ctx, saved.Key, cfg.Jira.ReadySprint)
+			if err != nil {
+				return saved.Children, err
+			}
+			create := func(child draft.Child) (string, error) {
+				return client.CreateChild(ctx, target, jira.NewChild{
+					Summary:     child.Title,
+					Description: draft.SplitDescription(target.Parent, target.Summary),
+					Refinement:  child.Refinement(),
+				})
+			}
+			return draft.CreateSplit(saved, create, drafts.SaveChildren)
+		},
 		Move: func(ctx context.Context, key string) error {
 			return client.MoveToSprint(ctx, key, cfg.Jira.ReadySprint)
 		},

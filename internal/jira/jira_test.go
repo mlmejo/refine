@@ -3,6 +3,7 @@ package jira
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -281,5 +282,117 @@ func TestMoveToSprintNeedsATicketInASprint(t *testing.T) {
 	err := New(server.URL, "me", "t").MoveToSprint(context.Background(), "GEEK-1", "Ready")
 	if err == nil || !strings.Contains(err.Error(), "in no sprint") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestSplitCopiesTheParentAndFindsTheSprint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/rest/api/3/issue/GEEK-1":
+			w.Write([]byte(`{"key":"GEEK-1","fields":{
+				"summary":"Book Management",
+				"project":{"key":"GEEK"},
+				"labels":["Dating_Brands"],
+				"priority":{"id":"3"},
+				"assignee":{"accountId":"abc"},
+				"customfield_10020":[{"id":1493,"boardId":5}]
+			}}`))
+		case r.URL.Path == "/rest/agile/1.0/board/5/sprint":
+			w.Write([]byte(`{"isLast":true,"values":[{"id":1323,"name":"Ready for Sprint - Team John"}]}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	target, err := New(server.URL, "me", "t").Split(context.Background(), "GEEK-1", "Ready for Sprint - Team John")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := SplitTarget{Parent: "GEEK-1", Summary: "Book Management", Project: "GEEK", Labels: []string{"Dating_Brands"}, PriorityID: "3", AssigneeID: "abc", SprintID: 1323}
+	if fmt.Sprint(target) != fmt.Sprint(want) {
+		t.Errorf("target = %+v, want %+v", target, want)
+	}
+}
+
+func TestCreateChildCreatesALinkedTaskThenSetsPoints(t *testing.T) {
+	var created map[string]any
+	var points map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/2/issue":
+			json.NewDecoder(r.Body).Decode(&created)
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"id":"42702","key":"GEEK-12"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/rest/api/2/issue/GEEK-12":
+			json.NewDecoder(r.Body).Decode(&points)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	target := SplitTarget{Parent: "GEEK-1", Project: "GEEK", Labels: []string{"Dating_Brands"}, PriorityID: "3", AssigneeID: "abc", SprintID: 1323}
+	key, err := New(server.URL, "me", "t").CreateChild(context.Background(), target, NewChild{
+		Summary:     "Book Management - Deleting Book",
+		Description: "Split from GEEK-1.",
+		Refinement: Refinement{
+			AcceptanceCriteria:      "* As an admin, I want to delete books.",
+			TechnicalImplementation: "api\n\n* app/Books.php",
+			StoryPointCriteria:      "Total: Low",
+			Points:                  1,
+		},
+	})
+	if err != nil || key != "GEEK-12" {
+		t.Fatalf("key %q err %v", key, err)
+	}
+
+	fields := created["fields"].(map[string]any)
+	for field, want := range map[string]string{
+		"summary":                    "Book Management - Deleting Book",
+		"description":                "Split from GEEK-1.",
+		FieldAcceptanceCriteria:      "* As an admin, I want to delete books.",
+		FieldTechnicalImplementation: "api\n\n* app/Books.php",
+		FieldStoryPointCriteria:      "Total: Low",
+		"issuetype":                  "map[name:Task]",
+		"project":                    "map[key:GEEK]",
+		"priority":                   "map[id:3]",
+		"assignee":                   "map[accountId:abc]",
+		"labels":                     "[Dating_Brands]",
+		FieldSprint:                  "1323",
+	} {
+		if got := fmt.Sprint(fields[field]); got != want {
+			t.Errorf("%s = %q, want %q", field, got, want)
+		}
+	}
+	if _, ok := fields[FieldStoryPoints]; ok {
+		t.Error("points sent on create; they are not on the create screen")
+	}
+	link := fmt.Sprint(created["update"])
+	if !strings.Contains(link, "name:Relates") || !strings.Contains(link, "outwardIssue:map[key:GEEK-1]") {
+		t.Errorf("update = %s", link)
+	}
+	if got := fmt.Sprint(points); got != "map[fields:map["+FieldStoryPoints+":1]]" {
+		t.Errorf("points = %s", got)
+	}
+}
+
+func TestCreateChildReturnsTheKeyWhenPointsFail(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.Write([]byte(`{"key":"GEEK-12"}`))
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"errors":{"customfield_10026":"Field cannot be set."}}`))
+	}))
+	defer server.Close()
+
+	key, err := New(server.URL, "me", "t").CreateChild(context.Background(), SplitTarget{Parent: "GEEK-1", Project: "GEEK"}, NewChild{Summary: "x"})
+	if key != "GEEK-12" || err == nil || !strings.Contains(err.Error(), "created GEEK-12, but could not set its points") {
+		t.Errorf("key %q err %v", key, err)
 	}
 }

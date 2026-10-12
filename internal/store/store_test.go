@@ -102,10 +102,31 @@ func TestSaveAnswersPersistsAndRewritesMarkdown(t *testing.T) {
 	}
 }
 
+func TestSaveChildrenPersistsAndRewritesMarkdown(t *testing.T) {
+	s := open(t, t.TempDir())
+	saved, err := s.Add(draft.Saved{Key: "GEEK-5", Draft: draft.Draft{Split: []draft.Child{{Title: "Books - Adding"}, {Title: "Books - Deleting"}}}}, "Books")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	saved.Children = map[int]string{1: "GEEK-7"}
+	if err := s.SaveChildren(saved); err != nil {
+		t.Fatal(err)
+	}
+
+	latest, _, err := s.Latest("GEEK-5")
+	if err != nil || len(latest.Children) != 1 || latest.Children[1] != "GEEK-7" {
+		t.Errorf("children = %v err %v", latest.Children, err)
+	}
+	if data, _ := os.ReadFile(saved.Markdown); !strings.Contains(string(data), "Created as GEEK-7.") {
+		t.Errorf("markdown:\n%s", data)
+	}
+}
+
 func TestOpenMigratesVersionOneDatabase(t *testing.T) {
 	dir := t.TempDir()
 	s := open(t, dir)
-	if _, err := s.db.Exec(`ALTER TABLE drafts DROP COLUMN answers; ALTER TABLE drafts DROP COLUMN session_cost_usd; ALTER TABLE drafts DROP COLUMN turns; ALTER TABLE drafts DROP COLUMN usage; DROP TABLE outlines; DROP TABLE briefs; PRAGMA user_version = 1`); err != nil {
+	if _, err := s.db.Exec(`ALTER TABLE drafts DROP COLUMN answers; ALTER TABLE drafts DROP COLUMN session_cost_usd; ALTER TABLE drafts DROP COLUMN turns; ALTER TABLE drafts DROP COLUMN usage; ALTER TABLE drafts DROP COLUMN children; DROP TABLE outlines; DROP TABLE briefs; PRAGMA user_version = 1`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()

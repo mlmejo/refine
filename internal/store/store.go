@@ -113,12 +113,17 @@ func (s *Store) migrate(legacyDir string) error {
 			return err
 		}
 	}
+	if version < 5 {
+		if _, err := s.db.Exec(`ALTER TABLE drafts ADD COLUMN children TEXT NOT NULL DEFAULT '{}'`); err != nil {
+			return err
+		}
+	}
 	if version < 1 {
 		if err := s.importJSON(legacyDir); err != nil {
 			return fmt.Errorf("import %s: %w", legacyDir, err)
 		}
 	}
-	_, err := s.db.Exec("PRAGMA user_version = 4")
+	_, err := s.db.Exec("PRAGMA user_version = 5")
 	return err
 }
 
@@ -201,6 +206,23 @@ func (s *Store) SaveAnswers(saved draft.Saved) error {
 	return draft.WriteMarkdown(saved.Markdown, saved, summary)
 }
 
+// SaveChildren records the keys of the split tickets created from the draft
+// and rewrites its markdown with them.
+func (s *Store) SaveChildren(saved draft.Saved) error {
+	children, err := json.Marshal(saved.Children)
+	if err != nil {
+		return err
+	}
+	var summary string
+	if err := s.db.QueryRow(`SELECT summary FROM drafts WHERE id = ?`, saved.ID).Scan(&summary); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`UPDATE drafts SET children = ? WHERE id = ?`, string(children), saved.ID); err != nil {
+		return err
+	}
+	return draft.WriteMarkdown(saved.Markdown, saved, summary)
+}
+
 // Outline returns the repo's cached outline at a commit, if there is one.
 func (s *Store) Outline(repo, commit string) (string, bool, error) {
 	var outline string
@@ -236,7 +258,7 @@ func (s *Store) History(key string) ([]draft.Saved, error) {
 }
 
 func (s *Store) query(where string, args ...any) ([]draft.Saved, error) {
-	rows, err := s.db.Query(`SELECT id, key, approach, ref, session_id, cost_usd, session_cost_usd, turns, usage, created, draft, markdown, answers FROM drafts `+where, args...)
+	rows, err := s.db.Query(`SELECT id, key, approach, ref, session_id, cost_usd, session_cost_usd, turns, usage, created, draft, markdown, answers, children FROM drafts `+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -245,14 +267,17 @@ func (s *Store) query(where string, args ...any) ([]draft.Saved, error) {
 	var drafts []draft.Saved
 	for rows.Next() {
 		var saved draft.Saved
-		var created, data, answers, usage string
-		if err := rows.Scan(&saved.ID, &saved.Key, &saved.Approach, &saved.Ref, &saved.SessionID, &saved.CostUSD, &saved.SessionCostUSD, &saved.Turns, &usage, &created, &data, &saved.Markdown, &answers); err != nil {
+		var created, data, answers, usage, children string
+		if err := rows.Scan(&saved.ID, &saved.Key, &saved.Approach, &saved.Ref, &saved.SessionID, &saved.CostUSD, &saved.SessionCostUSD, &saved.Turns, &usage, &created, &data, &saved.Markdown, &answers, &children); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(usage), &saved.Usage); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(answers), &saved.Answers); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(children), &saved.Children); err != nil {
 			return nil, err
 		}
 		if saved.Created, err = time.Parse(time.RFC3339Nano, created); err != nil {

@@ -159,6 +159,7 @@
         "required": [
           "title",
           "points",
+          "story_point_criteria",
           "acceptance_criteria",
           "technical_implementation"
         ],
@@ -169,7 +170,7 @@
           },
           "points": {
             "type": "integer",
-            "description": "Usually 1, at most 3."
+            "description": "Usually 1, at most 3, and consistent with this child's story_point_criteria."
           },
           "acceptance_criteria": {
             "type": "array",
@@ -211,6 +212,62 @@
                     }
                   }
                 }
+              }
+            }
+          },
+          "story_point_criteria": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "novelty",
+              "risk",
+              "dependency",
+              "testing",
+              "deployment",
+              "total"
+            ],
+            "properties": {
+              "novelty": {
+                "enum": [
+                  "Low",
+                  "Medium",
+                  "High"
+                ]
+              },
+              "risk": {
+                "enum": [
+                  "Low",
+                  "Medium",
+                  "High"
+                ]
+              },
+              "dependency": {
+                "enum": [
+                  "Low",
+                  "Medium",
+                  "High"
+                ]
+              },
+              "testing": {
+                "enum": [
+                  "Low",
+                  "Medium",
+                  "High"
+                ]
+              },
+              "deployment": {
+                "enum": [
+                  "Low",
+                  "Medium",
+                  "High"
+                ]
+              },
+              "total": {
+                "enum": [
+                  "Low",
+                  "Medium",
+                  "High"
+                ]
               }
             }
           }

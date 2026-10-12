@@ -24,13 +24,33 @@ func (c StoryPointCriteria) Rows() [][2]string {
 // Refinement is the draft as Jira's refinement fields take it. The fields
 // render plain text, so nothing here is markdown: a backtick would show as is.
 func (d Draft) Refinement() jira.Refinement {
+	return refinement(d.AcceptanceCriteria, d.TechnicalImplementation, d.StoryPointCriteria, d.Points)
+}
+
+// Refinement is the split ticket as Jira's refinement fields take it. A child
+// from a draft made before children were rated has no Story Point Criteria.
+func (c Child) Refinement() jira.Refinement {
+	return refinement(c.AcceptanceCriteria, c.TechnicalImplementation, c.StoryPointCriteria, c.Points)
+}
+
+// Rated reports whether Claude rated these criteria.
+func (c StoryPointCriteria) Rated() bool {
+	return c.Total != ""
+}
+
+// SplitDescription is a split ticket's description, pointing back at its parent.
+func SplitDescription(parent, summary string) string {
+	return fmt.Sprintf("Split from %s (%s), which holds the foundation this builds on.", parent, summary)
+}
+
+func refinement(criteria []string, repos []RepoFiles, rating StoryPointCriteria, points int) jira.Refinement {
 	var ac strings.Builder
-	for _, item := range d.AcceptanceCriteria {
+	for _, item := range criteria {
 		ac.WriteString("* " + item + "\n")
 	}
 
 	var ti strings.Builder
-	for i, repo := range d.TechnicalImplementation {
+	for i, repo := range repos {
 		if i > 0 {
 			ti.WriteString("\n")
 		}
@@ -45,15 +65,17 @@ func (d Draft) Refinement() jira.Refinement {
 	}
 
 	var spc []string
-	for _, row := range d.StoryPointCriteria.Rows() {
-		spc = append(spc, row[0]+": "+row[1])
+	if rating.Rated() {
+		for _, row := range rating.Rows() {
+			spc = append(spc, row[0]+": "+row[1])
+		}
 	}
 
 	return jira.Refinement{
 		AcceptanceCriteria:      strings.TrimSpace(ac.String()),
 		TechnicalImplementation: strings.TrimSpace(ti.String()),
 		StoryPointCriteria:      strings.Join(spc, "\n"),
-		Points:                  d.Points,
+		Points:                  points,
 	}
 }
 
@@ -122,6 +144,15 @@ func Markdown(saved Saved, summary string) string {
 			bullets(&out, "*", child.AcceptanceCriteria)
 			out.WriteString("\n**Technical Implementation**\n\n")
 			repoFiles(&out, child.TechnicalImplementation)
+			if child.StoryPointCriteria.Rated() {
+				out.WriteString("\n**Story Point Criteria**\n\n")
+				for _, row := range child.StoryPointCriteria.Rows() {
+					fmt.Fprintf(&out, "- %s: %s\n", row[0], row[1])
+				}
+			}
+			if key := saved.Children[i]; key != "" {
+				fmt.Fprintf(&out, "\nCreated as %s.\n", key)
+			}
 		}
 	}
 
