@@ -525,6 +525,15 @@ func renderDraft(saved draft.Saved, width, focus int, answer string) (string, []
 		place(fmt.Sprintf("Split · %d tickets", len(d.Split)), split)
 	}
 
+	if len(d.Relations) > 0 {
+		var related []string
+		for _, relation := range d.Relations {
+			related = append(related, keyStyle.Render(relation.Label()+" "+relation.Key))
+			related = append(related, strings.Split(hang("  ", relation.Why, inner), "\n")...)
+		}
+		place(fmt.Sprintf("Related tickets · %d", len(d.Relations)), related)
+	}
+
 	var questions []string
 	if len(d.OpenQuestions) == 0 {
 		questions = append(questions, pendingStyle.Render("none"))

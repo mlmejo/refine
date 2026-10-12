@@ -366,3 +366,18 @@ func TestConfirmCountsOnlySplitTicketsNotCreatedYet(t *testing.T) {
 		t.Errorf("view:\n%s", view)
 	}
 }
+
+func TestDraftShowsRelatedTickets(t *testing.T) {
+	related := sample
+	related.Draft.Relations = []draft.Relation{{Key: "GEEK-12000", Kind: "needed_by", Why: "GEEK-12000's live badge needs this store."}}
+	m := onDraft(t, Refiner{
+		Load: func(key string) (draft.Saved, bool, error) { return related, key == "GEEK-1", nil },
+	}, 120)
+
+	view := m.View()
+	for _, want := range []string{"Related tickets · 1", "needed by GEEK-12000", "GEEK-12000's live badge needs this store."} {
+		if !strings.Contains(view, want) {
+			t.Errorf("missing %q in:\n%s", want, view)
+		}
+	}
+}

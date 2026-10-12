@@ -156,6 +156,14 @@ func Markdown(saved Saved, summary string) string {
 		}
 	}
 
+	out.WriteString("\n## Related tickets\n\n")
+	if len(d.Relations) == 0 {
+		out.WriteString("_None._\n")
+	}
+	for _, relation := range d.Relations {
+		fmt.Fprintf(&out, "- %s %s: %s\n", relation.Label(), relation.Key, relation.Why)
+	}
+
 	out.WriteString("\n## Open questions\n\n")
 	answered(&out, d.OpenQuestions, saved.Answers)
 	return out.String()

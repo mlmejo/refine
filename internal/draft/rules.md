@@ -77,6 +77,15 @@ Child "Book Management - Deleting Book" (1 point):
 * As an administrator, I want to delete existing books, so that we can tidy our inventory.
 * As a regular user, I cannot delete books, because I do not have enough privileges.
 
+## Related tickets
+- Compare your drafted ticket, its split children included, with the developer's other tickets you are given. Judge from their criteria, files and descriptions, and from the code you read. Read no more code for this.
+- needs: this ticket can be built, but one of its criteria cannot pass QA until the other ticket ships. For example, a criterion that a badge updates live needs the ticket that adds the live listener. Quote the criterion.
+- needed_by: the reverse; one of the other ticket's criteria cannot pass until this ticket ships.
+- duplicates: both tickets deliver the same behaviour. Name it, and say which ticket should keep it.
+- conflicts: their criteria contradict, so QA cannot pass both, for example two different counts on the same badge. Each conflict also becomes one open question naming both tickets.
+- overlaps: both change the same files, or both mark the same file new, so the second to merge must build on the first. Name the files.
+- Leave out tickets that only share an area or a word. When nothing ties a ticket to this one, leave it out; an empty list is fine.
+
 ## The developer's approach
 - The developer's approach sets the scope. When the description, comments or existing fields cover more or other work, draft only what the approach covers. Leave the rest out of every field and the split, and raise the mismatch as one open question.
 - The developer wrote their approach before seeing yours, often in an area they do not know well. A partial approach is normal, not a fault.

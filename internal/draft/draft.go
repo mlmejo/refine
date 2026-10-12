@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mlmejo/refine/internal/jira"
 	"github.com/mlmejo/refine/internal/outline"
@@ -26,6 +27,7 @@ type Draft struct {
 	Points                  int                `json:"points"`
 	Deployment              Deployment         `json:"deployment"`
 	Split                   []Child            `json:"split"`
+	Relations               []Relation         `json:"relations"`
 	ApproachReview          ApproachReview     `json:"approach_review"`
 	OpenQuestions           []string           `json:"open_questions"`
 }
@@ -68,6 +70,68 @@ type Child struct {
 	TechnicalImplementation []RepoFiles `json:"technical_implementation"`
 	// StoryPointCriteria is empty on drafts made before children were rated.
 	StoryPointCriteria StoryPointCriteria `json:"story_point_criteria"`
+}
+
+// Relation is how this ticket stands to another of the developer's tickets.
+type Relation struct {
+	Key  string `json:"key"`
+	Kind string `json:"kind"`
+	Why  string `json:"why"`
+}
+
+// Label reads the relation's kind as a phrase before the other ticket's key.
+func (r Relation) Label() string {
+	switch r.Kind {
+	case "needs":
+		return "needs"
+	case "needed_by":
+		return "needed by"
+	case "duplicates":
+		return "duplicates"
+	case "conflicts":
+		return "conflicts with"
+	case "overlaps":
+		return "overlaps"
+	}
+	return r.Kind
+}
+
+// OthersPrompt lists the developer's other tickets, so the draft can say how
+// it relates to them. A ticket without Acceptance Criteria shows its description.
+func OthersPrompt(self string, others []jira.Ticket) string {
+	var out strings.Builder
+	for _, ticket := range others {
+		if ticket.Key == self {
+			continue
+		}
+		if out.Len() == 0 {
+			out.WriteString("\nThe developer's other tickets in refinement and ready for sprint. Say in relations how this ticket stands to them:\n")
+		}
+		fmt.Fprintf(&out, "\n%s (%s): %s\n", ticket.Key, ticket.Status, ticket.Summary)
+		if ticket.AcceptanceCriteria == "" {
+			section(&out, "Description", clip(ticket.Description, maxOtherDescription))
+		} else {
+			section(&out, "Acceptance Criteria", ticket.AcceptanceCriteria)
+		}
+		if ticket.TechnicalImplementation != "" {
+			section(&out, "Technical Implementation", ticket.TechnicalImplementation)
+		}
+	}
+	return out.String()
+}
+
+// maxOtherDescription caps each unrefined ticket's description, so the list
+// stays a small part of the prompt.
+const maxOtherDescription = 1500
+
+func clip(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	for limit > 0 && !utf8.RuneStart(text[limit]) {
+		limit--
+	}
+	return strings.TrimSpace(text[:limit]) + "…"
 }
 
 // ApproachReview is Claude's check of the developer's approach.

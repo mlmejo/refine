@@ -113,3 +113,19 @@ func TestChildRefinementLeavesOutUnratedCriteria(t *testing.T) {
 		t.Errorf("SPC = %q", got)
 	}
 }
+
+func TestMarkdownListsRelations(t *testing.T) {
+	saved := Saved{Key: "GEEK-11989", Draft: Draft{Relations: []Relation{
+		{Key: "GEEK-12000", Kind: "needs", Why: "A new notification raises the bell only once Echo runs app-wide."},
+		{Key: "GEEK-11998", Kind: "conflicts", Why: "The mobile Messages badge shows unread messages here, notifications there."},
+	}}}
+	got := Markdown(saved, "")
+	for _, want := range []string{
+		"## Related tickets\n\n- needs GEEK-12000: A new notification",
+		"- conflicts with GEEK-11998: The mobile Messages badge",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}

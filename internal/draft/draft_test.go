@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mlmejo/refine/internal/jira"
 	"github.com/mlmejo/refine/internal/outline"
@@ -273,5 +274,38 @@ func TestCreateSplitSkipsCreatedChildrenAndKeepsEachKey(t *testing.T) {
 	}
 	if len(saved.Children) != 1 {
 		t.Errorf("saved.Children changed: %v", saved.Children)
+	}
+}
+
+func TestOthersPromptListsOtherTickets(t *testing.T) {
+	others := []jira.Ticket{
+		{Issue: jira.Issue{Key: "GEEK-1", Summary: "This one"}},
+		{Issue: jira.Issue{Key: "GEEK-2", Summary: "Echo listener", Status: "To Do", AcceptanceCriteria: "* No user-facing behaviour.", TechnicalImplementation: "datingv2\n\n* app/plugins/realtime.client.ts (new)"}, Description: "not shown"},
+		{Issue: jira.Issue{Key: "GEEK-3", Summary: "Bell", Status: "To Do"}, Description: strings.Repeat("é", maxOtherDescription)},
+	}
+	got := OthersPrompt("GEEK-1", others)
+
+	if strings.Contains(got, "This one") {
+		t.Error("lists the ticket being drafted")
+	}
+	for _, want := range []string{
+		"GEEK-2 (To Do): Echo listener",
+		"Acceptance Criteria:\n* No user-facing behaviour.",
+		"app/plugins/realtime.client.ts (new)",
+		"GEEK-3 (To Do): Bell",
+		"…",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "not shown") {
+		t.Error("shows the description of a ticket that has Acceptance Criteria")
+	}
+	if !utf8.ValidString(got) {
+		t.Error("clipped mid-rune")
+	}
+	if OthersPrompt("GEEK-1", others[:1]) != "" {
+		t.Error("prompt for no other tickets")
 	}
 }

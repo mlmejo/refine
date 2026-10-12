@@ -120,15 +120,39 @@ func AssignedJQL(sprint string) string {
 	return fmt.Sprintf(`assignee = currentUser() AND sprint = %s ORDER BY updated DESC`, quote(sprint))
 }
 
+// MineJQL lists the current user's open tickets in the given sprints.
+func MineJQL(sprints ...string) string {
+	quoted := make([]string, len(sprints))
+	for i, sprint := range sprints {
+		quoted[i] = quote(sprint)
+	}
+	return fmt.Sprintf(`assignee = currentUser() AND sprint in (%s) AND statusCategory != Done ORDER BY key ASC`, strings.Join(quoted, ", "))
+}
+
 // Search runs a JQL query and returns the matching issues.
 func (c *Client) Search(ctx context.Context, jql string) ([]Issue, error) {
+	tickets, err := c.search(ctx, jql)
+	issues := make([]Issue, len(tickets))
+	for i, ticket := range tickets {
+		issues[i] = ticket.Issue
+	}
+	return issues, err
+}
+
+// Tickets runs a JQL query and returns the matching tickets with their
+// descriptions, but no comments or points.
+func (c *Client) Tickets(ctx context.Context, jql string) ([]Ticket, error) {
+	return c.search(ctx, jql, "description")
+}
+
+func (c *Client) search(ctx context.Context, jql string, extra ...string) ([]Ticket, error) {
 	body, err := json.Marshal(map[string]any{
 		"jql":        jql,
 		"maxResults": maxResults,
-		"fields": []string{
+		"fields": append([]string{
 			"summary", "status",
 			FieldAcceptanceCriteria, FieldTechnicalImplementation, FieldStoryPointCriteria,
-		},
+		}, extra...),
 	})
 	if err != nil {
 		return nil, err
@@ -142,6 +166,7 @@ func (c *Client) Search(ctx context.Context, jql string) ([]Issue, error) {
 				Status  struct {
 					Name string `json:"name"`
 				} `json:"status"`
+				Description             json.RawMessage `json:"description"`
 				AcceptanceCriteria      json.RawMessage `json:"customfield_10042"`
 				TechnicalImplementation json.RawMessage `json:"customfield_10043"`
 				StoryPointCriteria      json.RawMessage `json:"customfield_10284"`
@@ -152,18 +177,22 @@ func (c *Client) Search(ctx context.Context, jql string) ([]Issue, error) {
 		return nil, err
 	}
 
-	issues := make([]Issue, 0, len(page.Issues))
+	tickets := make([]Ticket, 0, len(page.Issues))
 	for _, raw := range page.Issues {
-		issues = append(issues, Issue{
-			Key:                     raw.Key,
-			Summary:                 raw.Fields.Summary,
-			Status:                  raw.Fields.Status.Name,
-			AcceptanceCriteria:      fieldText(raw.Fields.AcceptanceCriteria),
-			TechnicalImplementation: fieldText(raw.Fields.TechnicalImplementation),
-			StoryPointCriteria:      fieldText(raw.Fields.StoryPointCriteria),
-		})
+		ticket := Ticket{
+			Issue: Issue{
+				Key:                     raw.Key,
+				Summary:                 raw.Fields.Summary,
+				Status:                  raw.Fields.Status.Name,
+				AcceptanceCriteria:      fieldText(raw.Fields.AcceptanceCriteria),
+				TechnicalImplementation: fieldText(raw.Fields.TechnicalImplementation),
+				StoryPointCriteria:      fieldText(raw.Fields.StoryPointCriteria),
+			},
+			Description: fieldText(raw.Fields.Description),
+		}
+		tickets = append(tickets, ticket)
 	}
-	return issues, nil
+	return tickets, nil
 }
 
 // GetTicket reads one ticket with its description, points and comments.

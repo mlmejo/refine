@@ -44,6 +44,7 @@ func run() error {
 
 	client := jira.New(cfg.Jira.Site, cfg.Jira.Email, cfg.Jira.Token)
 	jql := jira.AssignedJQL(cfg.Jira.Sprint)
+	mineJQL := jira.MineJQL(cfg.Jira.Sprint, cfg.Jira.ReadySprint)
 
 	state, err := config.StateDir()
 	if err != nil {
@@ -153,15 +154,21 @@ func run() error {
 				if err != nil {
 					return draft.Saved{}, err
 				}
+				// Only a fresh session needs your other tickets; a resumed one has them.
+				mine, err := client.Tickets(ctx, mineJQL)
+				if err != nil {
+					return draft.Saved{}, fmt.Errorf("read your other tickets: %w", err)
+				}
+				others := draft.OthersPrompt(issue.Key, mine)
 				var answers string
 				if req.Previous != nil {
 					answers = draft.AnswersPrompt(*req.Previous)
 				}
 				if req.Brief != nil && req.Brief.SessionID != "" && req.Brief.Ref == *ref {
 					spentBefore = req.Brief.CostUSD
-					result, err = run.FromBrief(ctx, req.Brief.SessionID, draft.FromBriefPrompt(req.Approach)+answers)
+					result, err = run.FromBrief(ctx, req.Brief.SessionID, draft.FromBriefPrompt(req.Approach)+answers+others)
 				} else {
-					result, err = run.Run(ctx, draft.DraftPrompt(described, req.Approach)+answers)
+					result, err = run.Run(ctx, draft.DraftPrompt(described, req.Approach)+answers+others)
 				}
 				if err != nil {
 					return draft.Saved{}, err

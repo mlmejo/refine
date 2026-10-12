@@ -8,6 +8,7 @@
     "points",
     "deployment",
     "split",
+    "relations",
     "approach_review",
     "open_questions"
   ],
@@ -274,6 +275,38 @@
         }
       },
       "description": "Behaviour slices of the ticket. Empty when no split is needed."
+    },
+    "relations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "kind",
+          "why"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The other ticket's key, from the list of the developer's other tickets."
+          },
+          "kind": {
+            "enum": [
+              "needs",
+              "needed_by",
+              "duplicates",
+              "conflicts",
+              "overlaps"
+            ]
+          },
+          "why": {
+            "type": "string",
+            "description": "One sentence naming the criterion, behaviour or file that ties the tickets."
+          }
+        }
+      },
+      "description": "How this drafted ticket depends on, repeats, contradicts or collides with the developer's other tickets. Empty when none do."
     },
     "approach_review": {
       "type": "object",

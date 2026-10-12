@@ -396,3 +396,41 @@ func TestCreateChildReturnsTheKeyWhenPointsFail(t *testing.T) {
 		t.Errorf("key %q err %v", key, err)
 	}
 }
+
+func TestMineJQLCoversEverySprint(t *testing.T) {
+	got := MineJQL("Refinement Ready - Team John", "Ready for Sprint - Team John")
+	want := `assignee = currentUser() AND sprint in ("Refinement Ready - Team John", "Ready for Sprint - Team John") AND statusCategory != Done ORDER BY key ASC`
+	if got != want {
+		t.Errorf("jql = %q", got)
+	}
+}
+
+func TestTicketsReadDescriptions(t *testing.T) {
+	var got struct {
+		Fields []string `json:"fields"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&got)
+		w.Write([]byte(`{"issues":[
+			{"key":"GEEK-1","fields":{"summary":"Echo","status":{"name":"To Do"},
+				"description":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Add a listener."}]}]},
+				"customfield_10042":"* No user-facing behaviour."}},
+			{"key":"GEEK-2","fields":{"summary":"Bell","status":{"name":"To Do"},"description":null}}
+		]}`))
+	}))
+	defer server.Close()
+
+	tickets, err := New(server.URL, "me", "t").Tickets(context.Background(), "jql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fields := strings.Join(got.Fields, ","); !strings.Contains(fields, "description") {
+		t.Errorf("fields = %s", fields)
+	}
+	if len(tickets) != 2 || tickets[0].Description != "Add a listener." || tickets[0].AcceptanceCriteria != "* No user-facing behaviour." {
+		t.Fatalf("tickets = %+v", tickets)
+	}
+	if tickets[1].Description != "" {
+		t.Errorf("no description = %+v", tickets[1])
+	}
+}
