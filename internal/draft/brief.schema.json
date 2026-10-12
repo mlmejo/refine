@@ -1,0 +1,82 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "summary",
+    "flow",
+    "parts",
+    "terms",
+    "gotchas",
+    "ask_team"
+  ],
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "Two or three sentences on what the area does and where the ticket fits."
+    },
+    "flow": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "One step of today's flow, naming the file it happens in."
+      }
+    },
+    "parts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "repo",
+          "path",
+          "role"
+        ],
+        "properties": {
+          "repo": {
+            "type": "string",
+            "description": "Bare repo directory name."
+          },
+          "path": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "description": "One short line on what the file does here."
+          }
+        }
+      }
+    },
+    "terms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "term",
+          "meaning"
+        ],
+        "properties": {
+          "term": {
+            "type": "string"
+          },
+          "meaning": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "gotchas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "ask_team": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "Something the code cannot tell, and who can likely answer."
+      }
+    }
+  }
+}

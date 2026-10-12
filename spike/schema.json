@@ -1,0 +1,175 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "acceptance_criteria",
+    "technical_implementation",
+    "story_point_criteria",
+    "points",
+    "split",
+    "approach_review",
+    "open_questions"
+  ],
+  "properties": {
+    "acceptance_criteria": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "One plain sentence, no label or headline."
+      }
+    },
+    "technical_implementation": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "repo",
+          "files"
+        ],
+        "properties": {
+          "repo": {
+            "type": "string",
+            "description": "Bare repo directory name, no annotation."
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "new"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "new": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "story_point_criteria": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "novelty",
+        "risk",
+        "dependency",
+        "testing",
+        "deployment",
+        "total"
+      ],
+      "properties": {
+        "novelty": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        },
+        "risk": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        },
+        "dependency": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        },
+        "testing": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        },
+        "deployment": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        },
+        "total": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        }
+      }
+    },
+    "points": {
+      "type": "integer"
+    },
+    "split": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "points",
+          "scope"
+        ],
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "points": {
+            "type": "integer"
+          },
+          "scope": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "approach_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "holds",
+        "misses",
+        "alternatives"
+      ],
+      "properties": {
+        "holds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "misses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

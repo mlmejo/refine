@@ -1,0 +1,94 @@
+package draft
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestMarkdown(t *testing.T) {
+	saved := Saved{
+		Key:      "GEEK-7",
+		Approach: "Use the SDK.\nThen the header.",
+		Ref:      "develop",
+		Created:  time.Date(2026, 10, 8, 18, 0, 0, 0, time.Local),
+		Draft: Draft{
+			AcceptanceCriteria: []string{"QA sees the purchase."},
+			TechnicalImplementation: []RepoFiles{
+				{Repo: "dating-backend", Files: []File{{Path: "app/A.php"}, {Path: "app/B.php", New: true}}},
+				{Repo: "dating", Files: []File{{Path: "plugins/axios.js"}}},
+			},
+			StoryPointCriteria: StoryPointCriteria{Novelty: "Low", Risk: "Medium", Dependency: "Low", Testing: "Low", Deployment: "Low", Total: "Medium"},
+			Points:             3,
+			Split: []Child{{Title: "Purchase Tracking - Session Header", Points: 1,
+				AcceptanceCriteria:      []string{"As an analyst, I want purchases tied to the session, so that funnels add up."},
+				TechnicalImplementation: []RepoFiles{{Repo: "dating", Files: []File{{Path: "plugins/axios.js"}}}},
+			}},
+			ApproachReview: ApproachReview{Holds: []string{"SDK fits."}},
+		},
+	}
+
+	got := Markdown(saved, "Starvault PHP SDK")
+	for _, want := range []string{
+		"# GEEK-7: Starvault PHP SDK\n\nDrafted 2026-10-08 18:00 · 3 pts · repos at develop\n",
+		"> Use the SDK.\n> Then the header.\n",
+		"### Holds\n\n- SDK fits.\n",
+		"### Unsure, answered\n\n_None._\n", "### Not covered yet\n\n_None._\n",
+		"## Acceptance Criteria\n\n* QA sees the purchase.\n",
+		"`dating-backend`\n\n* `app/A.php`\n* `app/B.php` (new)\n\n`dating`\n\n* `plugins/axios.js`\n",
+		"- Risk & Feature Impact: Medium\n",
+		"- Total: Medium\n\n**Points:** 3\n",
+		"## Split\n\n### Purchase Tracking - Session Header (1 pts)\n\n**Acceptance Criteria**\n\n* As an analyst, I want purchases tied to the session, so that funnels add up.\n\n**Technical Implementation**\n\n`dating`\n\n* `plugins/axios.js`\n",
+		"## Open questions\n\n_None._\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("markdown missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestWriteMarkdown(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "exports", "GEEK-7", "1.md")
+	if err := WriteMarkdown(path, Saved{Key: "GEEK-7"}, "SDK"); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(path); !strings.HasPrefix(string(data), "# GEEK-7: SDK") {
+		t.Errorf("file:\n%s", data)
+	}
+}
+
+func TestMarkdownWithoutSummary(t *testing.T) {
+	if got := Markdown(Saved{Key: "GEEK-7"}, ""); !strings.HasPrefix(got, "# GEEK-7\n") {
+		t.Errorf("markdown:\n%s", got)
+	}
+}
+
+func TestRefinementIsPlainText(t *testing.T) {
+	d := Draft{
+		AcceptanceCriteria: []string{"The bell shows notifications only.", "Both badges survive a refresh."},
+		TechnicalImplementation: []RepoFiles{
+			{Repo: "datingv2", Files: []File{{Path: "app/pages/messages/[uuid].vue"}, {Path: "app/composables/useNotifications.ts", New: true}}},
+			{Repo: "dating-backend", Files: []File{{Path: "routes/dating.php"}}},
+		},
+		StoryPointCriteria: StoryPointCriteria{Novelty: "Low", Risk: "Low", Dependency: "Low", Testing: "Medium", Deployment: "Low", Total: "Medium"},
+		Points:             3,
+	}
+	got := d.Refinement()
+
+	if want := "* The bell shows notifications only.\n* Both badges survive a refresh."; got.AcceptanceCriteria != want {
+		t.Errorf("AC = %q", got.AcceptanceCriteria)
+	}
+	wantTI := "datingv2\n\n* app/pages/messages/[uuid].vue\n* app/composables/useNotifications.ts (new)\n\ndating-backend\n\n* routes/dating.php"
+	if got.TechnicalImplementation != wantTI {
+		t.Errorf("TI = %q", got.TechnicalImplementation)
+	}
+	wantSPC := "Novelty & Complexity of Implementation: Low\nRisk & Feature Impact: Low\nDependency & Integration Complexity: Low\nTesting & QA Effort: Medium\nDeployment Complexity: Low\nTotal: Medium"
+	if got.StoryPointCriteria != wantSPC {
+		t.Errorf("SPC = %q", got.StoryPointCriteria)
+	}
+	if got.Points != 3 {
+		t.Errorf("points = %d", got.Points)
+	}
+}

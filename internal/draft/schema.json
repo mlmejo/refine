@@ -1,0 +1,267 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "acceptance_criteria",
+    "technical_implementation",
+    "story_point_criteria",
+    "points",
+    "deployment",
+    "split",
+    "approach_review",
+    "open_questions"
+  ],
+  "properties": {
+    "acceptance_criteria": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "One plain sentence, no label or headline."
+      }
+    },
+    "technical_implementation": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "repo",
+          "files"
+        ],
+        "properties": {
+          "repo": {
+            "type": "string",
+            "description": "Bare repo directory name, no annotation."
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "new"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "new": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "story_point_criteria": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "novelty",
+        "risk",
+        "dependency",
+        "testing",
+        "deployment",
+        "total"
+      ],
+      "properties": {
+        "novelty": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        },
+        "risk": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        },
+        "dependency": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        },
+        "testing": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        },
+        "deployment": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        },
+        "total": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        }
+      }
+    },
+    "points": {
+      "type": "integer"
+    },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "evidence",
+        "steps",
+        "blockers"
+      ],
+      "properties": {
+        "platform": {
+          "type": "string",
+          "description": "Where each affected repo deploys, or \"Unknown: no deploy config in the repo\"."
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "A file or doc that shows how a repo deploys."
+          }
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "One concrete deploy step this ticket adds, on that platform."
+          }
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "A deploy, server, credential or access fact the developer must settle before the sprint starts, and who can answer it. Never repeated in open_questions."
+          }
+        }
+      }
+    },
+    "split": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "points",
+          "acceptance_criteria",
+          "technical_implementation"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Parent feature, a dash, then the one behaviour, for example \"Book Management - Deleting Book\"."
+          },
+          "points": {
+            "type": "integer",
+            "description": "Usually 1, at most 3."
+          },
+          "acceptance_criteria": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "One user story QA can check in the product: As a <role who uses the screen>, I want <action>, so that <benefit>. No metric definitions."
+            }
+          },
+          "technical_implementation": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "repo",
+                "files"
+              ],
+              "properties": {
+                "repo": {
+                  "type": "string",
+                  "description": "Bare repo directory name, no annotation."
+                },
+                "files": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "path",
+                      "new"
+                    ],
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "new": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "description": "Behaviour slices of the ticket. Empty when no split is needed."
+    },
+    "approach_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "holds",
+        "unsure",
+        "misses",
+        "alternatives"
+      ],
+      "properties": {
+        "holds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unsure": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "One thing the developer marked as unsure, and what the code says about it."
+          }
+        },
+        "misses": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "Something the approach leaves out without saying so, written as what to add."
+          }
+        },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "A product, scope, behaviour or code question. Never about deploy, servers, credentials or access; those are deployment blockers."
+      }
+    }
+  }
+}
