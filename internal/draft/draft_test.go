@@ -81,7 +81,7 @@ func fakeClaude(t *testing.T, output string, exit int) (bin, cwdFile string) {
 	if err := os.WriteFile(outFile, []byte(output), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\npwd -P > '" + cwdFile + "'\ncat '" + outFile + "'\nexit " + string(rune('0'+exit)) + "\n"
+	script := "#!/bin/sh\npwd -P > '" + cwdFile + "'\nprintf %s \"$CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD\" > '" + filepath.Join(dir, "env") + "'\ncat '" + outFile + "'\nexit " + string(rune('0'+exit)) + "\n"
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -111,6 +111,9 @@ func TestRunParsesStructuredOutput(t *testing.T) {
 	cwd, _ := os.ReadFile(cwdFile)
 	if resolved, _ := filepath.EvalSymlinks(dir); strings.TrimSpace(string(cwd)) != resolved {
 		t.Errorf("cwd = %q, want %q", cwd, resolved)
+	}
+	if env, _ := os.ReadFile(filepath.Join(filepath.Dir(cwdFile), "env")); string(env) != "1" {
+		t.Errorf("repo CLAUDE.md not loaded: env = %q", env)
 	}
 }
 

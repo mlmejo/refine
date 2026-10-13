@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -108,6 +109,9 @@ func (r Runner) run(ctx context.Context, args []string, into any) (Run, error) {
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = r.Dir
+	// Load each repo's CLAUDE.md, which --add-dir skips by default: it says
+	// what the repo is, such as a rewrite whose original is the spec.
+	cmd.Env = append(os.Environ(), "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1")
 	cmd.WaitDelay = 5 * time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

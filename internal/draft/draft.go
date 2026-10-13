@@ -237,7 +237,7 @@ func AnswersPrompt(previous Saved) string {
 
 // RevisePrompt asks a resumed session to redo its draft with the answers.
 func RevisePrompt(previous Saved) string {
-	return "Revise your draft with the team's answers. Reread code only where an answer changes what you need to know." + AnswersPrompt(previous)
+	return "Revise your draft with the team's answers. Reread code where an answer changes what you need to know, and recheck every earlier claim an answer touches. An answer can raise new decisions; ask them." + AnswersPrompt(previous)
 }
 
 func short(commit string) string {
