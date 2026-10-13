@@ -78,7 +78,14 @@ func (r Runner) Resume(ctx context.Context, session, prompt string) (Result, err
 // FromBrief drafts in a fork of the brief's session, which already holds the
 // code it read, and leaves the brief's own session as it was.
 func (r Runner) FromBrief(ctx context.Context, session, prompt string) (Result, error) {
-	return r.draft(ctx, append(r.args(prompt, session), "--fork-session"))
+	return r.draft(ctx, append(r.args(withRules(questionRules, prompt), session), "--fork-session"))
+}
+
+// withRules puts a step's rules in the prompt. A resumed session keeps the
+// system prompt it started with and ignores --append-system-prompt, so a
+// session that moves on to another step only sees that step's rules here.
+func withRules(rules, prompt string) string {
+	return "Your instructions for this step replace any earlier ones:\n\n" + rules + "\n---\n\n" + prompt
 }
 
 // Brief explains the area the ticket touches, for a developer new to it.
@@ -107,7 +114,7 @@ func (r Runner) Triage(ctx context.Context, prompt string) (TriageResult, error)
 // the code it read and the answers, and leaves that session as it was.
 func (r Runner) Stamp(ctx context.Context, session, prompt string) (Stamp, Run, error) {
 	var stamp Stamp
-	args := append(r.command(prompt, session, stampRules, stampSchema), "--fork-session")
+	args := append(r.command(withRules(stampRules, prompt), session, stampRules, stampSchema), "--fork-session")
 	run, err := r.run(ctx, args, &stamp)
 	return stamp, run, err
 }

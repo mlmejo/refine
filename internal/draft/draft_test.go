@@ -199,7 +199,7 @@ func TestStampForksTheQuestionsSession(t *testing.T) {
 		t.Fatalf("stamp = %+v run %+v err %v", stamp, run, err)
 	}
 	args, _ := os.ReadFile(argsFile)
-	if !strings.HasPrefix(string(args), "--resume q-1 -p stamp") || !strings.Contains(string(args), "--fork-session") || !strings.Contains(string(args), `"acceptance_criteria"`) {
+	if !strings.HasPrefix(string(args), "--resume q-1 -p Your instructions for this step replace any earlier ones") || !strings.Contains(string(args), "## Acceptance Criteria") || !strings.Contains(string(args), "---\n\nstamp") || !strings.Contains(string(args), "--fork-session") || !strings.Contains(string(args), `"acceptance_criteria"`) {
 		t.Errorf("args: %s", args)
 	}
 
@@ -335,7 +335,7 @@ func TestFromBriefForksTheBriefSession(t *testing.T) {
 		t.Fatalf("result = %+v err %v", got, err)
 	}
 	args, _ := os.ReadFile(argsFile)
-	if !strings.HasPrefix(string(args), "--resume b-1 -p draft") || !strings.Contains(string(args), "--fork-session") || !strings.Contains(string(args), `"findings"`) {
+	if !strings.HasPrefix(string(args), "--resume b-1 -p Your instructions for this step") || !strings.Contains(string(args), "## Questions") || !strings.Contains(string(args), "---\n\ndraft") || !strings.Contains(string(args), "--fork-session") || !strings.Contains(string(args), `"findings"`) {
 		t.Errorf("args: %s", args)
 	}
 }
