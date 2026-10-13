@@ -1,0 +1,67 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "problem",
+    "solution",
+    "blockers",
+    "scope_questions",
+    "relations"
+  ],
+  "properties": {
+    "problem": {
+      "type": "string",
+      "description": "Two or three plain sentences on what is wrong or missing today."
+    },
+    "solution": {
+      "type": "string",
+      "description": "Two or three plain sentences on the outcome the ticket asks for, not a design."
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "A ticket or outside fact that must land first, with its key and status when known, and what it blocks."
+      }
+    },
+    "scope_questions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "What to build that the ticket leaves unclear, with the options and your recommendation."
+      }
+    },
+    "relations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "kind",
+          "why"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The other ticket's key, from the list of the developer's other tickets."
+          },
+          "kind": {
+            "enum": [
+              "needs",
+              "needed_by",
+              "duplicates",
+              "conflicts",
+              "overlaps"
+            ]
+          },
+          "why": {
+            "type": "string",
+            "description": "One sentence naming the criterion, behaviour or file that ties the tickets."
+          }
+        }
+      },
+      "description": "How this ticket depends on, repeats, contradicts or collides with the developer's other tickets. Empty when none do."
+    }
+  }
+}

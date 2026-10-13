@@ -42,7 +42,7 @@ func (r Runner) Args(prompt string) []string {
 }
 
 func (r Runner) args(prompt, session string) []string {
-	return r.command(prompt, session, rules, schema)
+	return r.command(prompt, session, questionRules, questionsSchema)
 }
 
 func (r Runner) command(prompt, session, system, shape string) []string {
@@ -86,6 +86,30 @@ func (r Runner) Brief(ctx context.Context, prompt string) (BriefResult, error) {
 	var brief Brief
 	run, err := r.run(ctx, r.command(prompt, "", briefRules, briefSchema), &brief)
 	return BriefResult{Brief: brief, Run: run}, err
+}
+
+// Triage judges the ticket from Jira alone, with no repos and no tools.
+func (r Runner) Triage(ctx context.Context, prompt string) (TriageResult, error) {
+	var triage Triage
+	args := []string{
+		"-p", prompt,
+		"--append-system-prompt", triageRules,
+		"--json-schema", triageSchema,
+		"--output-format", "json",
+		"--tools", "",
+		"--strict-mcp-config",
+	}
+	run, err := r.run(ctx, args, &triage)
+	return TriageResult{Triage: triage, Run: run}, err
+}
+
+// Stamp writes up the ticket in a fork of the questions session, which holds
+// the code it read and the answers, and leaves that session as it was.
+func (r Runner) Stamp(ctx context.Context, session, prompt string) (Stamp, Run, error) {
+	var stamp Stamp
+	args := append(r.command(prompt, session, stampRules, stampSchema), "--fork-session")
+	run, err := r.run(ctx, args, &stamp)
+	return stamp, run, err
 }
 
 func (r Runner) draft(ctx context.Context, args []string) (Result, error) {

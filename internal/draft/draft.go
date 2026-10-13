@@ -13,14 +13,28 @@ import (
 	"github.com/mlmejo/refine/internal/outline"
 )
 
-//go:embed rules.md
-var rules string
+//go:embed questions.md
+var questionRules string
 
-//go:embed schema.json
-var schema string
+//go:embed questions.schema.json
+var questionsSchema string
 
-// Draft is Claude's refinement, shaped by schema.json.
+//go:embed stamp.md
+var stampRules string
+
+//go:embed stamp.schema.json
+var stampSchema string
+
+// Draft is Claude's refinement. The questions step fills the findings,
+// deployment, approach review and open questions (questions.schema.json); the
+// stamp step adds the fields written to Jira (stamp.schema.json). Problem,
+// Solution, TicketBlockers and Relations come from the ticket's triage.
 type Draft struct {
+	Problem        string   `json:"problem,omitempty"`
+	Solution       string   `json:"solution,omitempty"`
+	TicketBlockers []string `json:"ticket_blockers,omitempty"`
+	Findings       []string `json:"findings,omitempty"`
+
 	AcceptanceCriteria      []string           `json:"acceptance_criteria"`
 	TechnicalImplementation []RepoFiles        `json:"technical_implementation"`
 	StoryPointCriteria      StoryPointCriteria `json:"story_point_criteria"`
@@ -170,6 +184,13 @@ func Context(ticket jira.Ticket, repos map[string]string, outlines map[string]ou
 	section(&out, "Technical Implementation", ticket.TechnicalImplementation)
 	section(&out, "Story Point Criteria", ticket.StoryPointCriteria)
 
+	if len(ticket.Links) > 0 {
+		out.WriteString("\nLinks:\n")
+		for _, link := range ticket.Links {
+			fmt.Fprintf(&out, "- %s %s (%s): %s\n", link.Relation, link.Key, link.Status, link.Summary)
+		}
+	}
+
 	if len(ticket.Comments) > 0 {
 		out.WriteString("\nComments:\n")
 		for _, comment := range ticket.Comments {
@@ -197,6 +218,11 @@ func Context(ticket jira.Ticket, repos map[string]string, outlines map[string]ou
 	}
 
 	return out.String()
+}
+
+// TicketPrompt describes the ticket alone, without repos.
+func TicketPrompt(ticket jira.Ticket) string {
+	return Context(ticket, nil, nil, "")
 }
 
 func approachSection(approach string) string {
@@ -235,9 +261,51 @@ func AnswersPrompt(previous Saved) string {
 	return out.String()
 }
 
-// RevisePrompt asks a resumed session to redo its draft with the answers.
+// RevisePrompt asks a resumed session for its next round of questions, with
+// the answers to the last.
 func RevisePrompt(previous Saved) string {
-	return "Revise your draft with the team's answers. Reread code where an answer changes what you need to know, and recheck every earlier claim an answer touches. An answer can raise new decisions; ask them." + AnswersPrompt(previous)
+	return "Revise your findings and questions with the team's answers. Reread code where an answer changes what you need to know, and recheck every earlier claim an answer touches. An answer can raise new decisions; ask them." + AnswersPrompt(previous)
+}
+
+// Stamp is the write-up of a ticket whose questions are settled, shaped by
+// stamp.schema.json.
+type Stamp struct {
+	AcceptanceCriteria      []string           `json:"acceptance_criteria"`
+	TechnicalImplementation []RepoFiles        `json:"technical_implementation"`
+	StoryPointCriteria      StoryPointCriteria `json:"story_point_criteria"`
+	Points                  int                `json:"points"`
+	Split                   []Child            `json:"split"`
+}
+
+// WithStamp is the draft with the stamp's fields filled in.
+func (d Draft) WithStamp(s Stamp) Draft {
+	d.AcceptanceCriteria = s.AcceptanceCriteria
+	d.TechnicalImplementation = s.TechnicalImplementation
+	d.StoryPointCriteria = s.StoryPointCriteria
+	d.Points = s.Points
+	d.Split = s.Split
+	return d
+}
+
+// StampPrompt asks the questions session for the write-up, with every answer
+// and the questions the developer chose to proceed with unanswered.
+func StampPrompt(saved Saved) string {
+	var out strings.Builder
+	out.WriteString("The questions are done. Write up the ticket as your instructions say.\n")
+	out.WriteString(AnswersPrompt(saved))
+	var open []string
+	for _, question := range saved.Draft.Questions() {
+		if strings.TrimSpace(saved.Answers[question]) == "" {
+			open = append(open, question)
+		}
+	}
+	if len(open) > 0 {
+		out.WriteString("\nThe developer chose to proceed with these still open. Follow your recommendation where a field depends on one, and do not present it as settled:\n")
+		for _, question := range open {
+			fmt.Fprintf(&out, "- %s\n", question)
+		}
+	}
+	return out.String()
 }
 
 func short(commit string) string {

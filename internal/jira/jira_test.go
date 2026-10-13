@@ -110,7 +110,7 @@ func TestMyselfReturnsDisplayName(t *testing.T) {
 	}
 }
 
-func TestGetTicketReadsDescriptionPointsAndComments(t *testing.T) {
+func TestGetTicketReadsDescriptionPointsCommentsAndLinks(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/rest/api/3/issue/GEEK-7" {
 			t.Errorf("path = %s", r.URL.Path)
@@ -130,7 +130,11 @@ func TestGetTicketReadsDescriptionPointsAndComments(t *testing.T) {
 			"customfield_10284":"Total: High",
 			"comment":{"comments":[{"author":{"displayName":"PO"},"body":{"type":"doc","content":[
 				{"type":"paragraph","content":[{"type":"text","text":"D23 to D25, D01"}]}
-			]}}]}
+			]}}]},
+			"issuelinks":[
+				{"type":{"inward":"is blocked by","outward":"blocks"},"inwardIssue":{"key":"GEEK-5","fields":{"summary":"Notifications view","status":{"name":"In Progress"}}}},
+				{"type":{"inward":"is cloned by","outward":"clones"},"outwardIssue":{"key":"GEEK-3","fields":{"summary":"Old SDK","status":{"name":"Done"}}}}
+			]
 		}}`))
 	}))
 	defer server.Close()
@@ -147,6 +151,13 @@ func TestGetTicketReadsDescriptionPointsAndComments(t *testing.T) {
 	}
 	if len(ticket.Comments) != 1 || ticket.Comments[0] != (Comment{Author: "PO", Body: "D23 to D25, D01"}) {
 		t.Errorf("comments = %#v", ticket.Comments)
+	}
+	want := []Link{
+		{Relation: "is blocked by", Key: "GEEK-5", Summary: "Notifications view", Status: "In Progress"},
+		{Relation: "clones", Key: "GEEK-3", Summary: "Old SDK", Status: "Done"},
+	}
+	if len(ticket.Links) != 2 || ticket.Links[0] != want[0] || ticket.Links[1] != want[1] {
+		t.Errorf("links = %#v", ticket.Links)
 	}
 }
 

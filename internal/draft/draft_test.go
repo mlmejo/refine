@@ -152,9 +152,110 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSchemaIsValidJSON(t *testing.T) {
-	if !json.Valid([]byte(schema)) || !strings.Contains(rules, "## Acceptance Criteria") {
-		t.Error("embedded schema or rules broken")
+func TestStepSchemasAndRulesAreEmbedded(t *testing.T) {
+	for name, step := range map[string]struct{ schema, rules, heading string }{
+		"triage":    {triageSchema, triageRules, "## Scope questions"},
+		"questions": {questionsSchema, questionRules, "## Questions"},
+		"stamp":     {stampSchema, stampRules, "## Acceptance Criteria"},
+	} {
+		if !json.Valid([]byte(step.schema)) || !strings.Contains(step.rules, step.heading) {
+			t.Errorf("%s: embedded schema or rules broken", name)
+		}
+	}
+	// Each step asks for its own fields only.
+	if strings.Contains(questionsSchema, `"acceptance_criteria"`) || strings.Contains(stampSchema, `"open_questions"`) || strings.Contains(questionRules, "## Acceptance Criteria") {
+		t.Error("questions and stamp steps overlap")
+	}
+}
+
+func TestTriageRunsWithoutReposOrTools(t *testing.T) {
+	dir := t.TempDir()
+	bin, argsFile := filepath.Join(dir, "claude"), filepath.Join(dir, "args")
+	script := "#!/bin/sh\nfor a in \"$@\"; do printf '[%s]' \"$a\"; done > '" + argsFile + "'\n" +
+		`echo '{"type":"result","subtype":"success","session_id":"t-1","total_cost_usd":0.04,"structured_output":{"problem":"Counts go stale.","solution":"Live counts.","blockers":["GEEK-5 (In Progress) blocks the badge reset"],"scope_questions":[],"relations":[]}}'` + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Runner{Bin: bin, Dir: dir, Repos: map[string]string{"a": "/r/a"}}.Triage(context.Background(), "triage")
+	if err != nil || got.Run.SessionID != "t-1" || got.Triage.Problem != "Counts go stale." || got.Triage.Blockers[0] != "GEEK-5 (In Progress) blocks the badge reset" {
+		t.Fatalf("result = %+v err %v", got, err)
+	}
+	args, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(args), "[--tools][]") || strings.Contains(string(args), "--add-dir") || !strings.Contains(string(args), `"scope_questions"`) {
+		t.Errorf("args: %s", args)
+	}
+}
+
+func TestStampForksTheQuestionsSession(t *testing.T) {
+	dir := t.TempDir()
+	bin, argsFile := filepath.Join(dir, "claude"), filepath.Join(dir, "args")
+	script := "#!/bin/sh\necho \"$@\" > '" + argsFile + "'\n" +
+		`echo '{"type":"result","subtype":"success","session_id":"s-2","total_cost_usd":1.2,"structured_output":{"acceptance_criteria":["QA sees it."],"technical_implementation":[],"story_point_criteria":{"total":"Low"},"points":1,"split":[]}}'` + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stamp, run, err := Runner{Bin: bin, Dir: dir}.Stamp(context.Background(), "q-1", "stamp")
+	if err != nil || run.CostUSD != 1.2 || stamp.Points != 1 {
+		t.Fatalf("stamp = %+v run %+v err %v", stamp, run, err)
+	}
+	args, _ := os.ReadFile(argsFile)
+	if !strings.HasPrefix(string(args), "--resume q-1 -p stamp") || !strings.Contains(string(args), "--fork-session") || !strings.Contains(string(args), `"acceptance_criteria"`) {
+		t.Errorf("args: %s", args)
+	}
+
+	d := Draft{Problem: "p", Findings: []string{"f"}, OpenQuestions: []string{"q"}}.WithStamp(stamp)
+	if d.Points != 1 || d.AcceptanceCriteria[0] != "QA sees it." || d.Problem != "p" || d.Findings[0] != "f" || d.OpenQuestions[0] != "q" {
+		t.Errorf("stamped draft = %+v", d)
+	}
+}
+
+func TestStampPromptCarriesAnswersAndOpenQuestions(t *testing.T) {
+	saved := Saved{
+		Draft:   Draft{Deployment: Deployment{Blockers: []string{"Who sets the env?"}}, OpenQuestions: []string{"Server count or client count?", "Reset on open?"}},
+		Answers: map[string]string{"Server count or client count?": "server"},
+	}
+	got := StampPrompt(saved)
+	if !strings.Contains(got, "- Q: Server count or client count?\n  A: \"server\"") {
+		t.Errorf("answers missing:\n%s", got)
+	}
+	if !strings.Contains(got, "proceed with these still open") || !strings.Contains(got, "- Who sets the env?\n- Reset on open?\n") {
+		t.Errorf("open questions missing:\n%s", got)
+	}
+	if got := StampPrompt(Saved{Draft: Draft{OpenQuestions: []string{"a"}}, Answers: map[string]string{"a": "yes"}}); strings.Contains(got, "still open") {
+		t.Errorf("all answered, yet:\n%s", got)
+	}
+}
+
+func TestStepsAndTriage(t *testing.T) {
+	if !(Saved{}).Stamped() || (Saved{Step: StepQuestions}).Stamped() || !(Saved{Step: StepStamp}).Stamped() {
+		t.Error("stamped: a draft from before steps counts as stamped, a questions draft does not")
+	}
+
+	triage := Triage{
+		Problem: "Counts go stale.", Solution: "Live counts.",
+		Blockers:       []string{"GEEK-5 blocks the reset"},
+		ScopeQuestions: []string{"Pop-ups too?"},
+		Relations:      []Relation{{Key: "GEEK-6", Kind: "needs", Why: "the badge criterion"}},
+	}
+	got := triage.Prompt()
+	for _, want := range []string{"Problem: Counts go stale.", "Blockers already known:\n- GEEK-5 blocks the reset", "Scope questions:\n- Pop-ups too?", "needs GEEK-6: the badge criterion"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("triage prompt missing %q:\n%s", want, got)
+		}
+	}
+
+	d := triage.Apply(Draft{Findings: []string{"f"}})
+	if d.Problem != "Counts go stale." || d.TicketBlockers[0] != "GEEK-5 blocks the reset" || d.Relations[0].Key != "GEEK-6" || d.Findings[0] != "f" {
+		t.Errorf("applied = %+v", d)
+	}
+	if next := Carry(d, Draft{Findings: []string{"g"}}); next.Solution != "Live counts." || next.Relations[0].Key != "GEEK-6" || next.Findings[0] != "g" {
+		t.Errorf("carried = %+v", next)
+	}
+
+	ticket := jira.Ticket{Issue: jira.Issue{Key: "GEEK-8", Summary: "Live"}, Links: []jira.Link{{Relation: "is blocked by", Key: "GEEK-5", Summary: "View", Status: "To Do"}}}
+	prompt := TriagePrompt(ticket, []jira.Ticket{{Issue: jira.Issue{Key: "GEEK-6", Summary: "Badge"}}})
+	if !strings.Contains(prompt, "- is blocked by GEEK-5 (To Do): View") || !strings.Contains(prompt, "GEEK-6") || strings.Contains(prompt, "Repos you can read") {
+		t.Errorf("triage prompt:\n%s", prompt)
 	}
 }
 
@@ -203,7 +304,7 @@ func TestBriefAndFromBriefPrompts(t *testing.T) {
 	if got := FromBriefPrompt("Reuse the ledger? not sure"); !strings.Contains(got, "read your brief") || !strings.Contains(got, `"Reuse the ledger? not sure"`) {
 		t.Errorf("from brief prompt:\n%s", got)
 	}
-	if !json.Valid([]byte(briefSchema)) || !strings.Contains(briefRules, "Do not propose an approach") || !strings.Contains(rules, "are not misses") {
+	if !json.Valid([]byte(briefSchema)) || !strings.Contains(briefRules, "Do not propose an approach") || !strings.Contains(questionRules, "are not misses") {
 		t.Error("embedded brief schema or rules broken")
 	}
 }
@@ -234,7 +335,7 @@ func TestFromBriefForksTheBriefSession(t *testing.T) {
 		t.Fatalf("result = %+v err %v", got, err)
 	}
 	args, _ := os.ReadFile(argsFile)
-	if !strings.HasPrefix(string(args), "--resume b-1 -p draft") || !strings.Contains(string(args), "--fork-session") || !strings.Contains(string(args), `"acceptance_criteria"`) {
+	if !strings.HasPrefix(string(args), "--resume b-1 -p draft") || !strings.Contains(string(args), "--fork-session") || !strings.Contains(string(args), `"findings"`) {
 		t.Errorf("args: %s", args)
 	}
 }

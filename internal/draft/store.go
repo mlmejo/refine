@@ -14,10 +14,13 @@ import (
 
 // Saved is a draft kept on disk with the approach and session behind it.
 type Saved struct {
-	ID        int64   `json:"id,omitempty"`
-	Key       string  `json:"key"`
-	Approach  string  `json:"approach"`
-	Ref       string  `json:"ref,omitempty"`
+	ID       int64  `json:"id,omitempty"`
+	Key      string `json:"key"`
+	Approach string `json:"approach"`
+	Ref      string `json:"ref,omitempty"`
+	// Step is StepQuestions until the draft is stamped. Drafts made before
+	// refinement had steps have none and count as stamped.
+	Step      string  `json:"step,omitempty"`
 	SessionID string  `json:"session_id"`
 	CostUSD   float64 `json:"cost_usd"`
 	// SessionCostUSD is the session's running total, which a resumed run reports.
@@ -33,6 +36,17 @@ type Saved struct {
 	// Children are the Jira keys of the split tickets already created from
 	// this draft, by index into Draft.Split.
 	Children map[int]string `json:"children,omitempty"`
+}
+
+// The steps a draft goes through.
+const (
+	StepQuestions = "questions"
+	StepStamp     = "stamp"
+)
+
+// Stamped reports whether the draft has the fields written to Jira.
+func (s Saved) Stamped() bool {
+	return s.Step != StepQuestions
 }
 
 // Questions are the deploy blockers and open questions the team must answer.

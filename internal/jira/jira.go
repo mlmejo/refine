@@ -43,6 +43,16 @@ type Ticket struct {
 	Description string
 	Points      *float64
 	Comments    []Comment
+	Links       []Link
+}
+
+// Link is another ticket linked to this one, read from this ticket's side,
+// for example "is blocked by".
+type Link struct {
+	Relation string
+	Key      string
+	Summary  string
+	Status   string
 }
 
 // Refinement is what refine writes back to a ticket.
@@ -198,7 +208,7 @@ func (c *Client) search(ctx context.Context, jql string, extra ...string) ([]Tic
 // GetTicket reads one ticket with its description, points and comments.
 func (c *Client) GetTicket(ctx context.Context, key string) (Ticket, error) {
 	fields := strings.Join([]string{
-		"summary", "status", "description", "comment", FieldStoryPoints,
+		"summary", "status", "description", "comment", "issuelinks", FieldStoryPoints,
 		FieldAcceptanceCriteria, FieldTechnicalImplementation, FieldStoryPointCriteria,
 	}, ",")
 
@@ -222,6 +232,14 @@ func (c *Client) GetTicket(ctx context.Context, key string) (Ticket, error) {
 					Body json.RawMessage `json:"body"`
 				} `json:"comments"`
 			} `json:"comment"`
+			IssueLinks []struct {
+				Type struct {
+					Inward  string `json:"inward"`
+					Outward string `json:"outward"`
+				} `json:"type"`
+				InwardIssue  *linkedIssue `json:"inwardIssue"`
+				OutwardIssue *linkedIssue `json:"outwardIssue"`
+			} `json:"issuelinks"`
 		} `json:"fields"`
 	}
 	path := "/rest/api/3/issue/" + url.PathEscape(key) + "?fields=" + url.QueryEscape(fields)
@@ -247,7 +265,33 @@ func (c *Client) GetTicket(ctx context.Context, key string) (Ticket, error) {
 			Body:   fieldText(comment.Body),
 		})
 	}
+	for _, link := range raw.Fields.IssueLinks {
+		relation, other := link.Type.Outward, link.OutwardIssue
+		if other == nil {
+			relation, other = link.Type.Inward, link.InwardIssue
+		}
+		if other == nil {
+			continue
+		}
+		ticket.Links = append(ticket.Links, Link{
+			Relation: relation,
+			Key:      other.Key,
+			Summary:  other.Fields.Summary,
+			Status:   other.Fields.Status.Name,
+		})
+	}
 	return ticket, nil
+}
+
+// linkedIssue is the other ticket in an issue link.
+type linkedIssue struct {
+	Key    string `json:"key"`
+	Fields struct {
+		Summary string `json:"summary"`
+		Status  struct {
+			Name string `json:"name"`
+		} `json:"status"`
+	} `json:"fields"`
 }
 
 // Update writes the refinement fields to a ticket. The text fields render as

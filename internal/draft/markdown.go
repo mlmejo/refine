@@ -89,16 +89,31 @@ func Markdown(saved Saved, summary string) string {
 		fmt.Fprintf(&out, "# %s: %s\n\n", saved.Key, summary)
 	}
 	meta := fmt.Sprintf("Drafted %s · %d pts", saved.Created.Local().Format("2006-01-02 15:04"), d.Points)
+	if !saved.Stamped() {
+		meta = fmt.Sprintf("Questions %s · not stamped yet", saved.Created.Local().Format("2006-01-02 15:04"))
+	}
 	if saved.Ref != "" {
 		meta += " · repos at " + saved.Ref
 	}
 	out.WriteString(meta + "\n")
+
+	if d.Problem != "" {
+		out.WriteString("\n## Ticket\n\n")
+		fmt.Fprintf(&out, "**Problem:** %s\n\n**Solution:** %s\n", d.Problem, d.Solution)
+		out.WriteString("\n### Blockers\n\n")
+		bullets(&out, "-", d.TicketBlockers)
+	}
 
 	out.WriteString("\n## Your approach\n\n")
 	if approach := strings.TrimSpace(saved.Approach); approach == "" {
 		out.WriteString("_Not known yet._\n")
 	} else {
 		out.WriteString("> " + strings.ReplaceAll(approach, "\n", "\n> ") + "\n")
+	}
+
+	if len(d.Findings) > 0 || !saved.Stamped() {
+		out.WriteString("\n## Findings\n\n")
+		bullets(&out, "-", d.Findings)
 	}
 
 	out.WriteString("\n## Approach review\n")
@@ -110,17 +125,19 @@ func Markdown(saved Saved, summary string) string {
 		bullets(&out, "-", part.items)
 	}
 
-	out.WriteString("\n## Acceptance Criteria\n\n")
-	bullets(&out, "*", d.AcceptanceCriteria)
+	if saved.Stamped() {
+		out.WriteString("\n## Acceptance Criteria\n\n")
+		bullets(&out, "*", d.AcceptanceCriteria)
 
-	out.WriteString("\n## Technical Implementation\n\n")
-	repoFiles(&out, d.TechnicalImplementation)
+		out.WriteString("\n## Technical Implementation\n\n")
+		repoFiles(&out, d.TechnicalImplementation)
 
-	out.WriteString("\n## Story Point Criteria\n\n")
-	for _, row := range d.StoryPointCriteria.Rows() {
-		fmt.Fprintf(&out, "- %s: %s\n", row[0], row[1])
+		out.WriteString("\n## Story Point Criteria\n\n")
+		for _, row := range d.StoryPointCriteria.Rows() {
+			fmt.Fprintf(&out, "- %s: %s\n", row[0], row[1])
+		}
+		fmt.Fprintf(&out, "\n**Points:** %d\n", d.Points)
 	}
-	fmt.Fprintf(&out, "\n**Points:** %d\n", d.Points)
 
 	out.WriteString("\n## Deployment\n\n")
 	fmt.Fprintf(&out, "**Platform:** %s\n", d.Deployment.Platform)
@@ -132,7 +149,7 @@ func Markdown(saved Saved, summary string) string {
 		bullets(&out, "-", part.items)
 	}
 	out.WriteString("\n### Blockers\n\n")
-	answered(&out, d.Deployment.Blockers, saved.Answers)
+	answered(&out, d.Deployment.Blockers, saved)
 
 	if len(d.Split) > 0 {
 		out.WriteString("\n## Split\n\n")
@@ -165,18 +182,23 @@ func Markdown(saved Saved, summary string) string {
 	}
 
 	out.WriteString("\n## Open questions\n\n")
-	answered(&out, d.OpenQuestions, saved.Answers)
+	answered(&out, d.OpenQuestions, saved)
 	return out.String()
 }
 
-func answered(out *strings.Builder, questions []string, answers map[string]string) {
+// answered lists the questions with their answers. A stamped draft marks the
+// ones the developer proceeded with unanswered.
+func answered(out *strings.Builder, questions []string, saved Saved) {
 	if len(questions) == 0 {
 		out.WriteString("_None._\n")
 	}
 	for _, question := range questions {
 		out.WriteString("- " + question + "\n")
-		if answer := strings.TrimSpace(answers[question]); answer != "" {
+		switch answer := strings.TrimSpace(saved.Answers[question]); {
+		case answer != "":
 			out.WriteString("  - **Answer:** " + strings.ReplaceAll(answer, "\n", " ") + "\n")
+		case saved.Step == StepStamp:
+			out.WriteString("  - _Still open: stamped without an answer._\n")
 		}
 	}
 }

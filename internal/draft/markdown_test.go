@@ -129,3 +129,40 @@ func TestMarkdownListsRelations(t *testing.T) {
 		}
 	}
 }
+
+func TestMarkdownFollowsTheSteps(t *testing.T) {
+	questions := Saved{
+		Key:     "GEEK-8",
+		Step:    StepQuestions,
+		Created: time.Date(2026, 10, 13, 9, 0, 0, 0, time.Local),
+		Draft: Draft{
+			Problem: "Counts go stale.", Solution: "Live counts.",
+			TicketBlockers: []string{"GEEK-5 blocks the reset"},
+			Findings:       []string{"echo.client.ts:73 connects on login"},
+			OpenQuestions:  []string{"Server count?", "Reset on open?"},
+		},
+		Answers: map[string]string{"Server count?": "yes"},
+	}
+	got := Markdown(questions, "Live")
+	for _, want := range []string{
+		"Questions 2026-10-13 09:00 · not stamped yet\n",
+		"## Ticket\n\n**Problem:** Counts go stale.\n\n**Solution:** Live counts.\n\n### Blockers\n\n- GEEK-5 blocks the reset\n",
+		"## Findings\n\n- echo.client.ts:73 connects on login\n",
+		"- Server count?\n  - **Answer:** yes\n- Reset on open?\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("questions markdown missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "## Acceptance Criteria") || strings.Contains(got, "Still open") {
+		t.Errorf("questions markdown has stamp parts:\n%s", got)
+	}
+
+	stamped := questions
+	stamped.Step = StepStamp
+	stamped.Draft.AcceptanceCriteria = []string{"QA sees live counts."}
+	got = Markdown(stamped, "Live")
+	if !strings.Contains(got, "## Acceptance Criteria\n\n* QA sees live counts.\n") || !strings.Contains(got, "- Reset on open?\n  - _Still open: stamped without an answer._\n") {
+		t.Errorf("stamped markdown:\n%s", got)
+	}
+}

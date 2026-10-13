@@ -1,0 +1,101 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "findings",
+    "deployment",
+    "approach_review",
+    "open_questions"
+  ],
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "One fact from the code that the decisions rest on, with the file and the lines read."
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "evidence",
+        "steps",
+        "blockers"
+      ],
+      "properties": {
+        "platform": {
+          "type": "string",
+          "description": "Where each affected repo deploys, or \"Unknown: no deploy config in the repo\"."
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "A file or doc that shows how a repo deploys."
+          }
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "One concrete deploy step this ticket adds, on that platform."
+          }
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "A deploy, server, credential or access fact the developer must settle before the sprint starts, and who can answer it. Never repeated in open_questions."
+          }
+        }
+      }
+    },
+    "approach_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "holds",
+        "unsure",
+        "misses",
+        "alternatives"
+      ],
+      "properties": {
+        "holds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unsure": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "One thing the developer marked as unsure, and what the code says about it."
+          }
+        },
+        "misses": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "Something the approach leaves out without saying so, written as what to add."
+          }
+        },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "A decision the build needs, with the options and your recommendation, or a product, scope or behaviour question. Never about deploy, servers, credentials or access; those are deployment blockers."
+      }
+    }
+  }
+}
