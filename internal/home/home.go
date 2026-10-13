@@ -68,6 +68,8 @@ const (
 	briefed
 	checking
 	stale
+	triaging
+	triaged
 )
 
 type loadedMsg struct {
@@ -104,6 +106,8 @@ type Model struct {
 	saved     map[string]draft.Saved
 	briefs    map[string]draft.SavedBrief
 	briefErr  error
+	triages   map[string]draft.SavedTriage
+	triageErr error
 	input     textarea.Model
 	draftErr  error
 	spin      spinner.Model
@@ -113,6 +117,10 @@ type Model struct {
 	pane      viewport.Model
 	resuming  bool
 	fromBrief bool
+	// stamping is set while the stamp step runs; stampAsk while asking to
+	// stamp with questions still open.
+	stamping bool
+	stampAsk bool
 
 	// Checking the repos against origin before Claude reads them: the brief
 	// (nil) or draft waiting on it, the screen it was asked from, repos behind
@@ -185,6 +193,7 @@ func New(title string, source Source, refiner Refiner) Model {
 		refiner:  refiner,
 		saved:    map[string]draft.Saved{},
 		briefs:   map[string]draft.SavedBrief{},
+		triages:  map[string]draft.SavedTriage{},
 		declined: map[string]string{},
 		input:    newInput(),
 		side:     -1,
@@ -324,7 +333,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pulledMsg:
 		return m.pulled(msg)
 
-	case draftedMsg, briefedMsg, elapsedMsg, exportedMsg, answerSavedMsg, writtenMsg, spinner.TickMsg:
+	case draftedMsg, briefedMsg, triagedMsg, elapsedMsg, exportedMsg, answerSavedMsg, writtenMsg, spinner.TickMsg:
 		return m.updateRefine(msg)
 
 	case tea.KeyMsg:
@@ -337,7 +346,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.screen {
 		case detail:
 			return m.updateDetail(msg)
-		case approach, drafting, drafted, briefing, briefed:
+		case approach, drafting, drafted, briefing, briefed, triaging, triaged:
 			return m.updateRefine(msg)
 		case checking, stale:
 			return m.updateSync(msg)
@@ -402,6 +411,11 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = list
 	case "a":
 		return m.openApproach()
+	case "t":
+		if _, ok := m.triages[m.issues[m.cursor].Key]; ok {
+			return m.openTriage(), nil
+		}
+		return m.startTriage()
 	case "b":
 		if _, ok := m.briefs[m.issues[m.cursor].Key]; ok {
 			return m.openBrief(), nil
@@ -457,6 +471,10 @@ func (m Model) View() string {
 		return m.viewBriefing()
 	case briefed:
 		return m.viewBriefed()
+	case triaging:
+		return m.viewTriaging()
+	case triaged:
+		return m.viewTriaged()
 	case drafting:
 		return m.viewDrafting()
 	case drafted:
@@ -695,13 +713,17 @@ func (m Model) viewDetail() string {
 	end := min(m.scroll+m.bodyHeight(), len(lines))
 	body := strings.Join(lines[m.scroll:end], "\n")
 
+	triage := "t triage"
+	if _, ok := m.triages[issue.Key]; ok {
+		triage = "t triage ✓"
+	}
 	brief := "b brief me"
 	if _, ok := m.briefs[issue.Key]; ok {
 		brief = "b brief"
 	}
-	help := "↑/↓ scroll · " + brief + " · a approach & draft · esc back · q quit"
+	help := "↑/↓ scroll · " + triage + " · " + brief + " · a approach & questions · esc back · q quit"
 	if _, ok := m.saved[issue.Key]; ok {
-		help = "↑/↓ scroll · " + brief + " · a redo approach · d saved draft · esc back · q quit"
+		help = "↑/↓ scroll · " + triage + " · " + brief + " · a redo approach · d saved draft · esc back · q quit"
 	}
 	return m.withFooter(header+"\n\n"+body+"\n", help)
 }

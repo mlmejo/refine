@@ -243,6 +243,9 @@ type Request struct {
 	// Brief, when set, is the ticket's brief; a fresh draft continues its
 	// session so the code it read is not read again.
 	Brief *SavedBrief
+	// Triage, when set, is the ticket's triage; a fresh draft without one
+	// triages the ticket first.
+	Triage *SavedTriage
 }
 
 // AnswersPrompt gives Claude the team's answers to the previous draft's questions.

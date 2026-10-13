@@ -25,6 +25,12 @@ type Refiner struct {
 	// LoadBrief reads the ticket's latest brief; Brief writes a new one.
 	LoadBrief func(key string) (draft.SavedBrief, bool, error)
 	Brief     func(ctx context.Context, issue jira.Issue) (draft.SavedBrief, error)
+	// LoadTriage reads the ticket's latest triage; Triage writes a new one.
+	LoadTriage func(key string) (draft.SavedTriage, bool, error)
+	Triage     func(ctx context.Context, issue jira.Issue) (draft.SavedTriage, error)
+	// Stamp writes up a draft's questions into the fields Jira takes,
+	// returning the stamped draft.
+	Stamp func(ctx context.Context, issue jira.Issue, saved draft.Saved) (draft.Saved, error)
 	// SaveAnswers keeps the answers on a draft.
 	SaveAnswers func(saved draft.Saved) error
 	// Reveal shows the draft's markdown file.
@@ -92,8 +98,9 @@ func newInput() textarea.Model {
 	return input
 }
 
-// loadSaved reads the ticket's saved draft and brief once.
+// loadSaved reads the ticket's saved draft, brief and triage once.
 func (m *Model) loadSaved(key string) {
+	m.loadTriage(key)
 	if _, ok := m.briefs[key]; !ok && m.refiner.LoadBrief != nil {
 		if brief, ok, err := m.refiner.LoadBrief(key); err == nil && ok {
 			m.briefs[key] = brief
@@ -104,6 +111,15 @@ func (m *Model) loadSaved(key string) {
 	}
 	if saved, ok, err := m.refiner.Load(key); err == nil && ok {
 		m.saved[key] = saved
+	}
+}
+
+func (m *Model) loadTriage(key string) {
+	if _, ok := m.triages[key]; ok || m.refiner.LoadTriage == nil {
+		return
+	}
+	if triage, ok, err := m.refiner.LoadTriage(key); err == nil && ok {
+		m.triages[key] = triage
 	}
 }
 
@@ -123,10 +139,13 @@ func (m *Model) resizeRefine() {
 	m.input.SetWidth(max(inputWidth-2, 20))
 	if briefWidth > 0 {
 		m.sidePane.Width, m.sidePane.Height = briefWidth, max(m.height-4, 1)
-		m.sidePane.SetContent(renderBrief(m.briefs[m.issues[m.cursor].Key], briefWidth))
+		m.sidePane.SetContent(m.renderSide(briefWidth))
 	}
 	if m.screen == briefed && len(m.issues) > 0 {
 		m.layoutBrief()
+	}
+	if m.screen == triaged && len(m.issues) > 0 {
+		m.layoutTriage()
 	}
 	m.input.SetHeight(max(m.height-8, 3))
 	if m.screen == drafted && len(m.issues) > 0 {
@@ -141,11 +160,21 @@ func (m Model) updateRefine(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.cancel = nil
+		if m.stamping {
+			m.stamping = false
+			if msg.err != nil {
+				m = m.openDraft()
+				m.answerErr = fmt.Errorf("could not stamp: %w", msg.err)
+				return m, nil
+			}
+		}
 		if msg.err != nil {
 			m.screen, m.draftErr = approach, msg.err
 			return m, m.input.Focus()
 		}
 		m.saved[msg.saved.Key] = msg.saved
+		// A fresh draft triages the ticket first when it had no triage.
+		m.loadTriage(msg.saved.Key)
 		return m.openDraft(), nil
 
 	case exportedMsg:
@@ -193,14 +222,17 @@ func (m Model) updateRefine(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case briefedMsg:
 		return m.briefDone(msg)
 
+	case triagedMsg:
+		return m.triageDone(msg)
+
 	case elapsedMsg:
-		if msg.runID != m.runID || (m.screen != drafting && m.screen != briefing) {
+		if msg.runID != m.runID || (m.screen != drafting && m.screen != briefing && m.screen != triaging) {
 			return m, nil
 		}
 		return m, tickElapsed(m.runID)
 
 	case spinner.TickMsg:
-		if m.screen != drafting && m.screen != briefing && m.screen != checking {
+		if m.screen != drafting && m.screen != briefing && m.screen != triaging && m.screen != checking {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -237,6 +269,12 @@ func (m Model) updateRefine(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.String() == "esc" {
 				m.cancel()
 				m.cancel, m.runID = nil, m.runID+1
+				if m.stamping {
+					m.stamping = false
+					m = m.openDraft()
+					m.answerErr = fmt.Errorf("stamp cancelled")
+					return m, nil
+				}
 				m.screen, m.draftErr = approach, fmt.Errorf("cancelled")
 				return m, m.input.Focus()
 			}
@@ -246,6 +284,9 @@ func (m Model) updateRefine(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case briefing, briefed:
 			return m.updateBrief(msg)
+
+		case triaging, triaged:
+			return m.updateTriage(msg)
 		}
 	}
 	return m, nil
@@ -256,9 +297,12 @@ func (m Model) startDraft(req draft.Request) (tea.Model, tea.Cmd) {
 	if brief, ok := m.briefs[issue.Key]; ok && !req.Resume {
 		req.Brief = &brief
 	}
+	if triage, ok := m.triages[issue.Key]; ok && !req.Resume {
+		req.Triage = &triage
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.runID++
-	m.cancel, m.started, m.resuming, m.fromBrief = cancel, time.Now(), req.Resume, req.Brief != nil
+	m.cancel, m.started, m.resuming, m.fromBrief, m.stamping = cancel, time.Now(), req.Resume, req.Brief != nil, false
 	if req.Resume {
 		m.syncNotes = nil
 	}
@@ -283,17 +327,36 @@ func (m Model) ticketHeader() string {
 }
 
 // approachWidths splits the approach screen between the input and the
-// ticket's brief, which shows beside it on a wide enough terminal.
+// ticket's triage and brief, which show beside it on a wide enough terminal.
 func (m Model) approachWidths() (int, int) {
 	width := max(m.width, 20)
-	if len(m.issues) == 0 || width < sideMinWidth {
-		return width, 0
-	}
-	if _, ok := m.briefs[m.issues[m.cursor].Key]; !ok {
+	if len(m.issues) == 0 || width < sideMinWidth || !m.hasSide() {
 		return width, 0
 	}
 	left := width * 9 / 20
 	return left, width - left
+}
+
+// hasSide reports whether the ticket has a triage or brief to show beside
+// the approach.
+func (m Model) hasSide() bool {
+	key := m.issues[m.cursor].Key
+	_, triaged := m.triages[key]
+	_, briefed := m.briefs[key]
+	return triaged || briefed
+}
+
+// renderSide is the triage, then the brief, for the approach screen.
+func (m Model) renderSide(width int) string {
+	key := m.issues[m.cursor].Key
+	var parts []string
+	if triage, ok := m.triages[key]; ok {
+		parts = append(parts, renderTriage(triage.Triage, width))
+	}
+	if brief, ok := m.briefs[key]; ok {
+		parts = append(parts, renderBrief(brief, width))
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func (m Model) viewApproach() string {
@@ -306,12 +369,12 @@ func (m Model) viewApproach() string {
 		out.WriteString(lipgloss.NewStyle().Width(inputWidth).Render(errorStyle.Render(m.draftErr.Error())) + "\n")
 	}
 	body := out.String()
-	help := "ctrl+s draft with Claude · esc back"
+	help := "ctrl+s ask Claude's questions · esc back"
 	if briefWidth > 0 {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().Width(inputWidth).Render(body), m.sidePane.View())
-		help = "ctrl+s draft with Claude · pgup/pgdn scroll brief · esc back"
-	} else if _, ok := m.briefs[m.issues[m.cursor].Key]; ok {
-		help = "ctrl+s draft with Claude · esc back · widen the terminal to see the brief here"
+		help = "ctrl+s ask Claude's questions · pgup/pgdn scroll triage and brief · esc back"
+	} else if m.hasSide() {
+		help = "ctrl+s ask Claude's questions · esc back · widen the terminal to see the triage and brief here"
 	}
 	return m.withFooter(m.ticketHeader()+"\n"+body+"\n", truncate(help, m.width))
 }
@@ -319,8 +382,8 @@ func (m Model) viewApproach() string {
 func (m Model) viewDrafting() string {
 	elapsed := time.Since(m.started).Truncate(time.Second)
 	body := m.ticketHeader() + "\n\n" +
-		m.spin.View() + " Claude is reading the repos and drafting… " + elapsed.String() + "\n" +
-		quietStyle.Render("Usually about 2 minutes, on your Claude plan.") + "\n"
+		m.spin.View() + " Claude is reading the repos for its questions… " + elapsed.String() + "\n" +
+		quietStyle.Render("Usually about 2 minutes, on your Claude plan. Triages the ticket first if it has no triage.") + "\n"
 	if m.fromBrief {
 		body = m.ticketHeader() + "\n\n" +
 			m.spin.View() + " Claude is drafting from the brief… " + elapsed.String() + "\n" +
@@ -328,8 +391,13 @@ func (m Model) viewDrafting() string {
 	}
 	if m.resuming {
 		body = m.ticketHeader() + "\n\n" +
-			m.spin.View() + " Claude is revising the draft with your answers… " + elapsed.String() + "\n" +
+			m.spin.View() + " Claude is working through your answers… " + elapsed.String() + "\n" +
 			quietStyle.Render("Picks up the earlier session, so it rereads little code.") + "\n"
+	}
+	if m.stamping {
+		body = m.ticketHeader() + "\n\n" +
+			m.spin.View() + " Claude is stamping the ticket from your answers… " + elapsed.String() + "\n" +
+			quietStyle.Render("Writes Acceptance Criteria, Technical Implementation, points and the split. Forks the questions session.") + "\n"
 	}
 	return m.withFooter(body+m.syncLines(), "esc cancel")
 }

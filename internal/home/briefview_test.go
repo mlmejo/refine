@@ -78,7 +78,7 @@ func TestBriefThenApproachDraftsFromTheBrief(t *testing.T) {
 	}
 
 	m = press(t, m, "a")
-	if m.screen != approach || !strings.Contains(m.View(), "pgup/pgdn scroll brief") || !strings.Contains(m.View(), "What this area does") {
+	if m.screen != approach || !strings.Contains(m.View(), "pgup/pgdn scroll triage and brief") || !strings.Contains(m.View(), "What this area does") {
 		t.Fatalf("approach beside brief:\n%s", m.View())
 	}
 	m = press(t, m, "Reuse the listener? not sure")

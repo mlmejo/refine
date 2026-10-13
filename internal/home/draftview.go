@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -78,7 +79,7 @@ func (m Model) current() draft.Saved {
 func (m Model) openDraft() Model {
 	m.screen = drafted
 	m.exported, m.exportErr, m.answerErr = "", nil, nil
-	m.confirming, m.writeErr = false, nil
+	m.confirming, m.writeErr, m.stampAsk = false, nil, false
 	m.focus, m.side, m.answering = 0, -1, false
 	m.resizeRefine()
 	m.pane.GotoTop()
@@ -154,6 +155,13 @@ func (m Model) updateDrafted(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.confirming {
 		return m.updateConfirm(msg)
 	}
+	if m.stampAsk {
+		m.stampAsk = false
+		if msg.String() != "y" {
+			return m, nil
+		}
+		return m.startStamp()
+	}
 	saved := m.current()
 	items := draftItems(saved.Draft)
 
@@ -219,11 +227,27 @@ func (m Model) updateDrafted(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.input.SetValue(saved.Approach)
 		return m.startDraft(draft.Request{Approach: saved.Approach, Previous: &saved, Resume: true})
+	case "S":
+		if m.refiner.Stamp == nil || saved.Step == "" {
+			return m, nil
+		}
+		m.answerErr = nil
+		if saved.Unanswered() > 0 {
+			m.stampAsk = true
+			return m, nil
+		}
+		return m.startStamp()
 	case "w":
 		if m.refiner.Write == nil || m.writing {
 			return m, nil
 		}
-		if left := saved.Unanswered(); left > 0 {
+		if !saved.Stamped() {
+			m.answerErr = fmt.Errorf("stamp the ticket with S before writing to Jira")
+			return m, nil
+		}
+		// A draft from before steps had no stamp, so its questions had to be
+		// answered and redrafted instead.
+		if left := saved.Unanswered(); left > 0 && saved.Step == "" {
 			m.answerErr = fmt.Errorf("answer %d more question%s and redraft before writing to Jira", left, plural(left))
 			return m, nil
 		}
@@ -242,6 +266,24 @@ func (m Model) updateDrafted(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.pane, cmd = m.pane.Update(msg)
 	return m, cmd
+}
+
+// startStamp writes up the current draft's questions into the fields Jira
+// takes. It reads code only to confirm paths, so it skips the repo check.
+func (m Model) startStamp() (tea.Model, tea.Cmd) {
+	issue, saved := m.issues[m.cursor], m.current()
+	ctx, cancel := context.WithCancel(context.Background())
+	m.runID++
+	m.cancel, m.started = cancel, time.Now()
+	m.resuming, m.fromBrief, m.stamping = false, false, true
+	m.screen, m.answerErr = drafting, nil
+
+	runID, stamp := m.runID, m.refiner.Stamp
+	work := func() tea.Msg {
+		stamped, err := stamp(ctx, issue, saved)
+		return draftedMsg{runID: runID, saved: stamped, err: err}
+	}
+	return m, tea.Batch(work, m.spin.Tick, tickElapsed(runID))
 }
 
 // updateConfirm writes the draft to Jira on y and cancels on any other key.
@@ -340,6 +382,12 @@ func nextUnanswered(saved draft.Saved, from int) int {
 func (m Model) viewDrafted() string {
 	saved := m.current()
 	meta := fmt.Sprintf("draft · %d pts · $%.2f · %s", saved.Draft.Points, saved.CostUSD, saved.Created.Local().Format("Jan 2 15:04"))
+	switch saved.Step {
+	case draft.StepQuestions:
+		meta = fmt.Sprintf("questions · $%.2f · %s", saved.CostUSD, saved.Created.Local().Format("Jan 2 15:04"))
+	case draft.StepStamp:
+		meta = fmt.Sprintf("stamped · %d pts · $%.2f · %s", saved.Draft.Points, saved.CostUSD, saved.Created.Local().Format("Jan 2 15:04"))
+	}
 	if saved.Ref != "" {
 		meta += " · repos at " + saved.Ref
 	}
@@ -361,9 +409,18 @@ func (m Model) viewDrafted() string {
 	body := m.ticketHeader() + "\n" + quietStyle.Render(meta) + "\n\n" + panes + "\n"
 
 	help := "↑/↓ move · enter open/answer · r redraft with answers · a redo approach · s markdown · w write to Jira · esc back"
+	switch saved.Step {
+	case draft.StepQuestions:
+		help = "↑/↓ move · enter answer · r next round with answers · S stamp · a redo approach · s markdown · esc back"
+	case draft.StepStamp:
+		help = "↑/↓ move · enter open/answer · w write to Jira · r more questions · S stamp again · a redo approach · s markdown · esc back"
+	}
 	switch {
 	case m.answering:
 		help = "enter save · esc cancel"
+	case m.stampAsk:
+		left := saved.Unanswered()
+		help = fmt.Sprintf("%d question%s still open. Stamp anyway? They stay in the draft as open, and you own proceeding without them. y/n", left, plural(left))
 	case m.confirming:
 		help = fmt.Sprintf("replace %s's Acceptance Criteria, Technical Implementation, Story Point Criteria and points (%d)", saved.Key, saved.Draft.Points)
 		if left := m.splitLeft(); left > 0 {
@@ -457,6 +514,8 @@ func renderDraft(saved draft.Saved, width, focus int, answer string) (string, []
 			body = append(body, "  "+answer)
 		case reply != "":
 			body = append(body, answerStyle.Render(hang("  ↳ ", reply, inner-1)))
+		case saved.Step == draft.StepStamp:
+			body = append(body, pendingStyle.Render("  ↳ still open: stamped without an answer"))
 		default:
 			body = append(body, pendingStyle.Render("  ↳ needs an answer"))
 		}
@@ -470,7 +529,19 @@ func renderDraft(saved draft.Saved, width, focus int, answer string) (string, []
 	if strings.TrimSpace(saved.Approach) != "" {
 		approach = strings.Split(hang("", saved.Approach, inner), "\n")
 	}
+	if d.Problem != "" {
+		ticket := strings.Split(hang("Problem: ", d.Problem, inner), "\n")
+		ticket = append(ticket, strings.Split(hang("Solution: ", d.Solution, inner), "\n")...)
+		ticket = append(ticket, titleStyle.Render("Blockers"))
+		ticket = append(ticket, bullets("⛔ ", d.TicketBlockers)...)
+		place("Ticket", ticket)
+	}
+
 	place("Your approach", approach)
+
+	if len(d.Findings) > 0 || !saved.Stamped() {
+		place(fmt.Sprintf("Findings · %d", len(d.Findings)), bullets("• ", d.Findings))
+	}
 
 	var review []string
 	for _, part := range []struct {
@@ -482,15 +553,17 @@ func renderDraft(saved draft.Saved, width, focus int, answer string) (string, []
 	}
 	place("Approach review", review)
 
-	place(fmt.Sprintf("Acceptance Criteria · %d", len(d.AcceptanceCriteria)), bullets("* ", d.AcceptanceCriteria))
-	place("Technical Implementation", repoLines(d.TechnicalImplementation, inner))
+	if saved.Stamped() {
+		place(fmt.Sprintf("Acceptance Criteria · %d", len(d.AcceptanceCriteria)), bullets("* ", d.AcceptanceCriteria))
+		place("Technical Implementation", repoLines(d.TechnicalImplementation, inner))
 
-	var points []string
-	for _, row := range d.StoryPointCriteria.Rows() {
-		points = append(points, fmt.Sprintf("%-40s %s", row[0], row[1]))
+		var points []string
+		for _, row := range d.StoryPointCriteria.Rows() {
+			points = append(points, fmt.Sprintf("%-40s %s", row[0], row[1]))
+		}
+		points = append(points, titleStyle.Render(fmt.Sprintf("%-40s %d", "Points", d.Points)))
+		place("Story Point Criteria", points)
 	}
-	points = append(points, titleStyle.Render(fmt.Sprintf("%-40s %d", "Points", d.Points)))
-	place("Story Point Criteria", points)
 
 	deploy := strings.Split(hang("Platform: ", d.Deployment.Platform, inner), "\n")
 	for _, part := range []struct {
@@ -526,12 +599,7 @@ func renderDraft(saved draft.Saved, width, focus int, answer string) (string, []
 	}
 
 	if len(d.Relations) > 0 {
-		var related []string
-		for _, relation := range d.Relations {
-			related = append(related, keyStyle.Render(relation.Label()+" "+relation.Key))
-			related = append(related, strings.Split(hang("  ", relation.Why, inner), "\n")...)
-		}
-		place(fmt.Sprintf("Related tickets · %d", len(d.Relations)), related)
+		place(fmt.Sprintf("Related tickets · %d", len(d.Relations)), relationLines(d.Relations, inner))
 	}
 
 	var questions []string

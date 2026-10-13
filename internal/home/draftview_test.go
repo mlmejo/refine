@@ -129,7 +129,7 @@ func TestRedraftNeedsEveryAnswerAndResumes(t *testing.T) {
 
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
 	m = next.(Model)
-	if m.screen != drafting || !strings.Contains(m.View(), "revising the draft with your answers") {
+	if m.screen != drafting || !strings.Contains(m.View(), "working through your answers") {
 		t.Fatalf("screen %v view:\n%s", m.screen, m.View())
 	}
 	awaitDraft(t, cmd)

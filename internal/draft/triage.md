@@ -14,6 +14,7 @@ You are triaging a Jira ticket before the developer who will build it reads any 
 - Ask what the ticket leaves unclear about what to build, never how to build it: which behaviours are in or out, whether part of it belongs in another ticket, what "matches legacy" or similar phrases cover.
 - Each question offers the options you see and your recommendation.
 - Leave code questions to the next step, which reads the code.
+- Do not ask about empty Acceptance Criteria, Technical Implementation or points: refinement fills them.
 
 ## Related tickets
 - Compare this ticket with the developer's other tickets you are given. Judge from their criteria, files and descriptions.

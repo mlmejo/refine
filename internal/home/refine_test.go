@@ -71,7 +71,7 @@ func TestApproachThenDraftShowsAllSections(t *testing.T) {
 	}})
 
 	m = press(t, m, "enter", "a")
-	if m.screen != approach || !strings.Contains(m.View(), "ctrl+s draft with Claude") {
+	if m.screen != approach || !strings.Contains(m.View(), "ctrl+s ask Claude's questions") {
 		t.Fatalf("screen = %v view:\n%s", m.screen, m.View())
 	}
 	m = press(t, m, "Use the SDK.")

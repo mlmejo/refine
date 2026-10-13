@@ -114,9 +114,37 @@ func run() error {
 		return run, draft.Context(ticket, repos, outlines, *ref), nil
 	}
 
+	// triage judges the ticket from Jira alone and keeps the result.
+	triage := func(ctx context.Context, key string) (draft.SavedTriage, error) {
+		ticket, err := client.GetTicket(ctx, key)
+		if err != nil {
+			return draft.SavedTriage{}, err
+		}
+		mine, err := client.Tickets(ctx, mineJQL)
+		if err != nil {
+			return draft.SavedTriage{}, fmt.Errorf("read your other tickets: %w", err)
+		}
+		result, err := draft.Runner{Dir: state}.Triage(ctx, draft.TriagePrompt(ticket, mine))
+		if err != nil {
+			return draft.SavedTriage{}, err
+		}
+		return drafts.AddTriage(draft.SavedTriage{
+			Key:       key,
+			SessionID: result.Run.SessionID,
+			CostUSD:   result.Run.CostUSD,
+			Turns:     result.Run.Turns,
+			Usage:     result.Run.Usage,
+			Triage:    result.Triage,
+		})
+	}
+
 	refiner := home.Refiner{
-		Load:      drafts.Latest,
-		LoadBrief: drafts.LatestBrief,
+		Load:       drafts.Latest,
+		LoadBrief:  drafts.LatestBrief,
+		LoadTriage: drafts.LatestTriage,
+		Triage: func(ctx context.Context, issue jira.Issue) (draft.SavedTriage, error) {
+			return triage(ctx, issue.Key)
+		},
 		Brief: func(ctx context.Context, issue jira.Issue) (draft.SavedBrief, error) {
 			run, described, err := prepare(ctx, issue.Key)
 			if err != nil {
@@ -138,6 +166,7 @@ func run() error {
 		},
 		Draft: func(ctx context.Context, issue jira.Issue, req draft.Request) (draft.Saved, error) {
 			var result draft.Result
+			var carried func(draft.Draft) draft.Draft
 			spentBefore := 0.0
 			switch {
 			case req.Resume && req.Previous != nil && req.Previous.SessionID != "":
@@ -153,26 +182,33 @@ func run() error {
 				if err != nil {
 					return draft.Saved{}, err
 				}
+				previous := req.Previous.Draft
+				carried = func(d draft.Draft) draft.Draft { return draft.Carry(previous, d) }
 			default:
 				run, described, err := prepare(ctx, issue.Key)
 				if err != nil {
 					return draft.Saved{}, err
 				}
-				// Only a fresh session needs your other tickets; a resumed one has them.
-				mine, err := client.Tickets(ctx, mineJQL)
-				if err != nil {
-					return draft.Saved{}, fmt.Errorf("read your other tickets: %w", err)
+				// The questions build on the triage; a ticket without one is
+				// triaged first.
+				triaged := req.Triage
+				if triaged == nil {
+					fresh, err := triage(ctx, issue.Key)
+					if err != nil {
+						return draft.Saved{}, fmt.Errorf("triage: %w", err)
+					}
+					triaged = &fresh
 				}
-				others := draft.OthersPrompt(issue.Key, mine)
-				var answers string
+				given := triaged.Triage.Prompt()
+				carried = triaged.Triage.Apply
 				if req.Previous != nil {
-					answers = draft.AnswersPrompt(*req.Previous)
+					given += draft.AnswersPrompt(*req.Previous)
 				}
 				if req.Brief != nil && req.Brief.SessionID != "" && req.Brief.Ref == *ref {
 					spentBefore = req.Brief.CostUSD
-					result, err = run.FromBrief(ctx, req.Brief.SessionID, draft.FromBriefPrompt(req.Approach)+answers+others)
+					result, err = run.FromBrief(ctx, req.Brief.SessionID, draft.FromBriefPrompt(req.Approach)+given)
 				} else {
-					result, err = run.Run(ctx, draft.DraftPrompt(described, req.Approach)+answers+others)
+					result, err = run.Run(ctx, draft.DraftPrompt(described, req.Approach)+given)
 				}
 				if err != nil {
 					return draft.Saved{}, err
@@ -182,6 +218,7 @@ func run() error {
 				Key:       issue.Key,
 				Approach:  req.Approach,
 				Ref:       *ref,
+				Step:      draft.StepQuestions,
 				SessionID: result.SessionID,
 				CostUSD:   result.CostUSD - spentBefore,
 				Created:   time.Now(),
@@ -189,9 +226,34 @@ func run() error {
 				SessionCostUSD: result.CostUSD,
 				Turns:          result.Turns,
 				Usage:          result.Usage,
-				Draft:          result.Draft,
+				Draft:          carried(result.Draft),
 			}
 			return drafts.Add(saved, issue.Summary)
+		},
+		Stamp: func(ctx context.Context, issue jira.Issue, questions draft.Saved) (draft.Saved, error) {
+			run, err := runner(ctx)
+			if err != nil {
+				return draft.Saved{}, err
+			}
+			stamp, result, err := run.Stamp(ctx, questions.SessionID, draft.StampPrompt(questions))
+			if err != nil {
+				return draft.Saved{}, err
+			}
+			// The fork reports what its whole session cost, the questions included.
+			spentBefore := questions.SessionCostUSD
+			if spentBefore == 0 {
+				spentBefore = questions.CostUSD
+			}
+			// The stamped draft keeps the questions session, so r asks more
+			// questions there rather than in the stamp's fork.
+			stamped := questions
+			stamped.ID, stamped.Markdown, stamped.Children = 0, "", nil
+			stamped.Step = draft.StepStamp
+			stamped.CostUSD = result.CostUSD - spentBefore
+			stamped.Turns, stamped.Usage = result.Turns, result.Usage
+			stamped.Created = time.Now()
+			stamped.Draft = questions.Draft.WithStamp(stamp)
+			return drafts.Add(stamped, issue.Summary)
 		},
 		SaveAnswers: drafts.SaveAnswers,
 		Reveal: func(saved draft.Saved) error {
