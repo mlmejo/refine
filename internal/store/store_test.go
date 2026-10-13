@@ -126,7 +126,7 @@ func TestSaveChildrenPersistsAndRewritesMarkdown(t *testing.T) {
 func TestOpenMigratesVersionOneDatabase(t *testing.T) {
 	dir := t.TempDir()
 	s := open(t, dir)
-	if _, err := s.db.Exec(`ALTER TABLE drafts DROP COLUMN answers; ALTER TABLE drafts DROP COLUMN session_cost_usd; ALTER TABLE drafts DROP COLUMN turns; ALTER TABLE drafts DROP COLUMN usage; ALTER TABLE drafts DROP COLUMN children; DROP TABLE outlines; DROP TABLE briefs; PRAGMA user_version = 1`); err != nil {
+	if _, err := s.db.Exec(`ALTER TABLE drafts DROP COLUMN answers; ALTER TABLE drafts DROP COLUMN session_cost_usd; ALTER TABLE drafts DROP COLUMN turns; ALTER TABLE drafts DROP COLUMN usage; ALTER TABLE drafts DROP COLUMN children; ALTER TABLE drafts DROP COLUMN step; DROP TABLE outlines; DROP TABLE briefs; DROP TABLE triages; PRAGMA user_version = 1`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
@@ -135,8 +135,45 @@ func TestOpenMigratesVersionOneDatabase(t *testing.T) {
 	if _, err := s.Add(draft.Saved{Key: "GEEK-4", Answers: map[string]string{"q": "no"}}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if latest, _, _ := s.Latest("GEEK-4"); latest.Answers["q"] != "no" {
-		t.Errorf("answers = %v", latest.Answers)
+	if latest, _, _ := s.Latest("GEEK-4"); latest.Answers["q"] != "no" || !latest.Stamped() {
+		t.Errorf("answers = %v, stamped = %v", latest.Answers, latest.Stamped())
+	}
+}
+
+func TestStepIsKeptPerDraft(t *testing.T) {
+	s := open(t, t.TempDir())
+	if _, err := s.Add(draft.Saved{Key: "GEEK-9", Step: draft.StepQuestions, Draft: draft.Draft{Findings: []string{"f"}, Problem: "p"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := s.Latest("GEEK-9")
+	if err != nil || got.Stamped() || got.Draft.Findings[0] != "f" || got.Draft.Problem != "p" {
+		t.Errorf("latest = %+v err %v", got, err)
+	}
+	if _, err := s.Add(draft.Saved{Key: "GEEK-9", Step: draft.StepStamp}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := s.Latest("GEEK-9"); got.Step != draft.StepStamp {
+		t.Errorf("step = %q", got.Step)
+	}
+}
+
+func TestTriagesKeepTheLatestPerTicket(t *testing.T) {
+	s := open(t, t.TempDir())
+	if _, ok, err := s.LatestTriage("GEEK-5"); ok || err != nil {
+		t.Fatalf("empty store: ok %v err %v", ok, err)
+	}
+	if _, err := s.AddTriage(draft.SavedTriage{Key: "GEEK-5", Triage: draft.Triage{Problem: "old"}}); err != nil {
+		t.Fatal(err)
+	}
+	added, err := s.AddTriage(draft.SavedTriage{Key: "GEEK-5", SessionID: "t-2", CostUSD: 0.05, Turns: 1, Usage: draft.Usage{Output: 300},
+		Triage: draft.Triage{Problem: "new", Blockers: []string{"GEEK-1"}, Relations: []draft.Relation{{Key: "GEEK-2", Kind: "needs"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := s.LatestTriage("GEEK-5")
+	if !ok || err != nil || got.ID != added.ID || got.SessionID != "t-2" || got.Turns != 1 || got.Usage.Output != 300 ||
+		got.Triage.Problem != "new" || got.Triage.Blockers[0] != "GEEK-1" || got.Triage.Relations[0].Key != "GEEK-2" {
+		t.Errorf("latest = %+v ok %v err %v", got, ok, err)
 	}
 }
 

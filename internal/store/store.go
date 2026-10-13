@@ -118,12 +118,29 @@ func (s *Store) migrate(legacyDir string) error {
 			return err
 		}
 	}
+	if version < 6 {
+		if _, err := s.db.Exec(`
+			ALTER TABLE drafts ADD COLUMN step TEXT NOT NULL DEFAULT '';
+			CREATE TABLE triages (
+				id         INTEGER PRIMARY KEY,
+				key        TEXT NOT NULL,
+				session_id TEXT NOT NULL,
+				cost_usd   REAL NOT NULL,
+				turns      INTEGER NOT NULL,
+				usage      TEXT NOT NULL,
+				created    TEXT NOT NULL,
+				triage     TEXT NOT NULL
+			);
+			CREATE INDEX triages_key ON triages (key, id);`); err != nil {
+			return err
+		}
+	}
 	if version < 1 {
 		if err := s.importJSON(legacyDir); err != nil {
 			return fmt.Errorf("import %s: %w", legacyDir, err)
 		}
 	}
-	_, err := s.db.Exec("PRAGMA user_version = 5")
+	_, err := s.db.Exec("PRAGMA user_version = 6")
 	return err
 }
 
@@ -178,9 +195,9 @@ func (s *Store) Add(saved draft.Saved, summary string) (draft.Saved, error) {
 		return draft.Saved{}, err
 	}
 	result, err := s.db.Exec(
-		`INSERT INTO drafts (key, summary, approach, ref, session_id, cost_usd, session_cost_usd, turns, usage, created, draft, markdown, answers)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		saved.Key, summary, saved.Approach, saved.Ref, saved.SessionID, saved.CostUSD, saved.SessionCostUSD, saved.Turns, string(usage),
+		`INSERT INTO drafts (key, summary, approach, ref, step, session_id, cost_usd, session_cost_usd, turns, usage, created, draft, markdown, answers)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		saved.Key, summary, saved.Approach, saved.Ref, saved.Step, saved.SessionID, saved.CostUSD, saved.SessionCostUSD, saved.Turns, string(usage),
 		saved.Created.UTC().Format(time.RFC3339Nano), string(data), saved.Markdown, string(answers),
 	)
 	if err != nil {
@@ -258,7 +275,7 @@ func (s *Store) History(key string) ([]draft.Saved, error) {
 }
 
 func (s *Store) query(where string, args ...any) ([]draft.Saved, error) {
-	rows, err := s.db.Query(`SELECT id, key, approach, ref, session_id, cost_usd, session_cost_usd, turns, usage, created, draft, markdown, answers, children FROM drafts `+where, args...)
+	rows, err := s.db.Query(`SELECT id, key, approach, ref, step, session_id, cost_usd, session_cost_usd, turns, usage, created, draft, markdown, answers, children FROM drafts `+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +285,7 @@ func (s *Store) query(where string, args ...any) ([]draft.Saved, error) {
 	for rows.Next() {
 		var saved draft.Saved
 		var created, data, answers, usage, children string
-		if err := rows.Scan(&saved.ID, &saved.Key, &saved.Approach, &saved.Ref, &saved.SessionID, &saved.CostUSD, &saved.SessionCostUSD, &saved.Turns, &usage, &created, &data, &saved.Markdown, &answers, &children); err != nil {
+		if err := rows.Scan(&saved.ID, &saved.Key, &saved.Approach, &saved.Ref, &saved.Step, &saved.SessionID, &saved.CostUSD, &saved.SessionCostUSD, &saved.Turns, &usage, &created, &data, &saved.Markdown, &answers, &children); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(usage), &saved.Usage); err != nil {
@@ -334,6 +351,54 @@ func (s *Store) LatestBrief(key string) (draft.SavedBrief, bool, error) {
 	}
 	if err := json.Unmarshal([]byte(brief), &saved.Brief); err != nil {
 		return draft.SavedBrief{}, false, err
+	}
+	saved.Created, err = time.Parse(time.RFC3339Nano, created)
+	return saved, err == nil, err
+}
+
+// AddTriage records a triage, returning it with its ID set.
+func (s *Store) AddTriage(saved draft.SavedTriage) (draft.SavedTriage, error) {
+	if saved.Created.IsZero() {
+		saved.Created = time.Now()
+	}
+	triage, err := json.Marshal(saved.Triage)
+	if err != nil {
+		return draft.SavedTriage{}, err
+	}
+	usage, err := json.Marshal(saved.Usage)
+	if err != nil {
+		return draft.SavedTriage{}, err
+	}
+	result, err := s.db.Exec(
+		`INSERT INTO triages (key, session_id, cost_usd, turns, usage, created, triage) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		saved.Key, saved.SessionID, saved.CostUSD, saved.Turns, string(usage),
+		saved.Created.UTC().Format(time.RFC3339Nano), string(triage),
+	)
+	if err != nil {
+		return draft.SavedTriage{}, err
+	}
+	saved.ID, err = result.LastInsertId()
+	return saved, err
+}
+
+// LatestTriage returns the ticket's newest triage, if there is one.
+func (s *Store) LatestTriage(key string) (draft.SavedTriage, bool, error) {
+	var saved draft.SavedTriage
+	var created, usage, triage string
+	err := s.db.QueryRow(
+		`SELECT id, key, session_id, cost_usd, turns, usage, created, triage FROM triages WHERE key = ? ORDER BY id DESC LIMIT 1`, key,
+	).Scan(&saved.ID, &saved.Key, &saved.SessionID, &saved.CostUSD, &saved.Turns, &usage, &created, &triage)
+	if errors.Is(err, sql.ErrNoRows) {
+		return draft.SavedTriage{}, false, nil
+	}
+	if err != nil {
+		return draft.SavedTriage{}, false, err
+	}
+	if err := json.Unmarshal([]byte(usage), &saved.Usage); err != nil {
+		return draft.SavedTriage{}, false, err
+	}
+	if err := json.Unmarshal([]byte(triage), &saved.Triage); err != nil {
+		return draft.SavedTriage{}, false, err
 	}
 	saved.Created, err = time.Parse(time.RFC3339Nano, created)
 	return saved, err == nil, err
