@@ -19,6 +19,7 @@ import (
 	"github.com/mlmejo/refine/internal/draft"
 	"github.com/mlmejo/refine/internal/gitsync"
 	"github.com/mlmejo/refine/internal/jira"
+	"github.com/mlmejo/refine/internal/reposcan"
 )
 
 var (
@@ -52,6 +53,8 @@ type Source struct {
 	Repos      func() map[string]string
 	AddRepo    func(name, dir string) error
 	RemoveRepo func(name string) error
+	// Track records a usage event when tracking is on; it may be nil.
+	Track func(name, key string, props map[string]any)
 }
 
 // removal is a ticket taken off the list, kept so u can put it back.
@@ -78,6 +81,7 @@ const (
 	triaged
 	repos
 	browse
+	scanned
 )
 
 type loadedMsg struct {
@@ -130,6 +134,15 @@ type Model struct {
 	stamping bool
 	stampAsk bool
 
+	// The approach screen's answers to the triage's scope questions, keyed
+	// by question; whether the questions have the focus instead of the
+	// approach, the one under the cursor, and whether it is being answered
+	// in words.
+	scope        map[string]string
+	scopeFocus   bool
+	scopeCursor  int
+	scopeEditing bool
+
 	// Checking the repos against origin before Claude reads them: the brief
 	// (nil) or draft waiting on it, the screen it was asked from, repos behind
 	// origin, pulls declined by origin commit, and notes shown while Claude works.
@@ -180,7 +193,9 @@ type Model struct {
 
 	// The repos screen: its cursor, the repo asked about removing, and what
 	// the last change did. The browser: the directory shown, its folders, the
-	// cursor and scroll, and the name a picked repo is about to get.
+	// cursor and scroll. The scan: the folder scanned, the checkouts found
+	// under it, which are picked to add, the cursor and scroll, and whether
+	// the one under the cursor is being renamed.
 	repoCursor int
 	repoAsk    string
 	repoErr    error
@@ -189,6 +204,11 @@ type Model struct {
 	folders    []folder
 	dirCursor  int
 	dirTop     int
+	scanDir    string
+	found      []reposcan.Found
+	picked     []bool
+	scanCursor int
+	scanTop    int
 	naming     bool
 	nameIn     textinput.Model
 }
@@ -377,6 +397,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateRepos(msg)
 		case browse:
 			return m.updateBrowse(msg)
+		case scanned:
+			return m.updateScan(msg)
 		}
 		return m.updateList(msg)
 	}
@@ -516,6 +538,8 @@ func (m Model) View() string {
 		return m.viewRepos()
 	case browse:
 		return m.viewBrowse()
+	case scanned:
+		return m.viewScan()
 	}
 	return m.viewList()
 }

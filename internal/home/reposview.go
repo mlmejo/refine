@@ -11,6 +11,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/mlmejo/refine/internal/reposcan"
 )
 
 // folder is a directory the browser lists, and whether it is a git checkout.
@@ -111,8 +113,7 @@ func (m Model) openBrowse(dir string) Model {
 		if info, err := os.Stat(path); err != nil || !info.IsDir() {
 			continue
 		}
-		_, err := os.Stat(filepath.Join(path, ".git"))
-		m.folders = append(m.folders, folder{name: entry.Name(), git: err == nil})
+		m.folders = append(m.folders, folder{name: entry.Name(), git: reposcan.IsRepo(path)})
 	}
 	// Going up lands on the folder just left.
 	m.dirCursor, m.dirTop = 0, 0
@@ -126,9 +127,6 @@ func (m Model) openBrowse(dir string) Model {
 }
 
 func (m Model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.naming {
-		return m.updateName(msg)
-	}
 	m.repoErr = nil
 	switch msg.String() {
 	case "q":
@@ -156,34 +154,73 @@ func (m Model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.dir = ""
 		return m.openBrowse(home), nil
 	case "a":
-		return m.pick()
+		if len(m.folders) > 0 {
+			return m.scan(filepath.Join(m.dir, m.folders[m.dirCursor].name)), nil
+		}
+	case ".":
+		return m.scan(m.dir), nil
 	}
 	m.clampBrowse()
 	return m, nil
 }
 
-// pick asks for a name for the selected folder, if it is a git checkout not
-// listed yet.
-func (m Model) pick() (tea.Model, tea.Cmd) {
-	if len(m.folders) == 0 {
-		return m, nil
-	}
-	f := m.folders[m.dirCursor]
-	path := filepath.Join(m.dir, f.name)
+// scan lists the git checkouts at or under dir, the new ones picked to add.
+func (m Model) scan(dir string) Model {
+	found, err := reposcan.Scan(dir, m.source.Repos())
 	switch {
-	case !f.git:
-		m.repoErr = fmt.Errorf("%s is not a git repo", f.name)
-		return m, nil
-	case m.listedAs(path) != "":
-		m.repoErr = fmt.Errorf("%s is already listed as %s", f.name, m.listedAs(path))
-		return m, nil
+	case err != nil:
+		m.repoErr = err
+		return m
+	case len(found) == 0:
+		m.repoErr = fmt.Errorf("no git repos in %s", tildePath(dir))
+		return m
 	}
-	m.naming = true
-	m.nameIn.SetValue(f.name)
-	m.nameIn.CursorEnd()
-	return m, m.nameIn.Focus()
+	m.screen, m.scanDir, m.found = scanned, dir, found
+	m.picked = make([]bool, len(found))
+	for i, f := range found {
+		m.picked[i] = f.Listed == ""
+	}
+	m.scanCursor, m.scanTop, m.naming = 0, 0, false
+	return m
 }
 
+func (m Model) updateScan(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.naming {
+		return m.updateName(msg)
+	}
+	m.repoErr = nil
+	switch msg.String() {
+	case "q":
+		return m, tea.Quit
+	case "esc":
+		m.screen = browse
+	case "up", "k":
+		m.scanCursor--
+	case "down", "j":
+		m.scanCursor++
+	case "g", "home":
+		m.scanCursor = 0
+	case "G", "end":
+		m.scanCursor = len(m.found) - 1
+	case " ", "x":
+		if m.found[m.scanCursor].Listed == "" {
+			m.picked[m.scanCursor] = !m.picked[m.scanCursor]
+		}
+	case "r":
+		if f := m.found[m.scanCursor]; f.Listed == "" {
+			m.naming = true
+			m.nameIn.SetValue(f.Name)
+			m.nameIn.CursorEnd()
+			return m, m.nameIn.Focus()
+		}
+	case "enter":
+		return m.addPicked(), nil
+	}
+	m.clampScan()
+	return m, nil
+}
+
+// updateName renames the repo under the scan's cursor.
 func (m Model) updateName(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
@@ -196,21 +233,71 @@ func (m Model) updateName(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.repoErr = fmt.Errorf("give the repo a name")
 			return m, nil
 		}
-		path := filepath.Join(m.dir, m.folders[m.dirCursor].name)
-		if err := m.source.AddRepo(name, path); err != nil {
-			m.repoErr = err
-			return m, nil
-		}
-		m.naming = false
+		found := slices.Clone(m.found)
+		found[m.scanCursor].Name = name
+		m.found, m.naming = found, false
+		m.picked[m.scanCursor] = true
 		m.nameIn.Blur()
-		m.screen, m.repoDone = repos, "added "+name
-		m.repoCursor = max(slices.Index(m.repoNames(), name), 0)
 		return m, nil
 	}
 	var cmd tea.Cmd
 	m.nameIn, cmd = m.nameIn.Update(msg)
 	m.repoErr = nil
 	return m, cmd
+}
+
+// addPicked adds the picked repos, stopping at the first that fails so the
+// rest stay picked.
+func (m Model) addPicked() Model {
+	var added []string
+	for i, f := range m.found {
+		if !m.picked[i] {
+			continue
+		}
+		if _, taken := m.source.Repos()[f.Name]; taken {
+			m.repoErr = fmt.Errorf("%s is already a repo's name; r renames it", f.Name)
+		} else if err := m.source.AddRepo(f.Name, f.Dir); err != nil {
+			m.repoErr = fmt.Errorf("%s: %w", f.Name, err)
+		}
+		if m.repoErr != nil {
+			m.scanCursor = i
+			m.markListed(added)
+			m.clampScan()
+			return m
+		}
+		added = append(added, f.Name)
+	}
+	if len(added) == 0 {
+		m.repoErr = fmt.Errorf("pick a repo to add with space")
+		return m
+	}
+	m.screen, m.repoDone = repos, "added "+strings.Join(added, ", ")
+	m.repoCursor = max(slices.Index(m.repoNames(), added[0]), 0)
+	return m
+}
+
+// markListed shows repos added before a failure as listed.
+func (m *Model) markListed(names []string) {
+	found := slices.Clone(m.found)
+	for i, f := range found {
+		if slices.Contains(names, f.Name) && f.Listed == "" {
+			found[i].Listed, m.picked[i] = f.Name, false
+		}
+	}
+	m.found = found
+}
+
+// clampScan keeps the scan's cursor on a repo and in view.
+func (m *Model) clampScan() {
+	m.scanCursor = min(max(m.scanCursor, 0), max(len(m.found)-1, 0))
+	rows := m.bodyHeight() - 1
+	if m.scanCursor < m.scanTop {
+		m.scanTop = m.scanCursor
+	}
+	if m.scanCursor >= m.scanTop+rows {
+		m.scanTop = m.scanCursor - rows + 1
+	}
+	m.scanTop = min(max(m.scanTop, 0), max(len(m.found)-rows, 0))
 }
 
 // listedAs is the name a repo at path is listed under, or "".
@@ -298,16 +385,63 @@ func (m Model) viewBrowse() string {
 		}
 	}
 
-	help := "↑/↓ move · → open · ← up · ~ home · a add repo · esc back"
-	switch {
-	case m.naming:
-		status := "enter add · esc cancel"
+	help := "↑/↓ move · → open · ← up · ~ home · a add repos in it · . add repos here · esc back"
+	if m.repoErr != nil {
+		help = errorStyle.Render(m.repoErr.Error())
+	}
+	return m.withFooter(out.String(), truncate(help, m.width))
+}
+
+func (m Model) viewScan() string {
+	var out strings.Builder
+	out.WriteString(titleStyle.Render("Add repos") + "  " + quietStyle.Render(truncate(tildePath(m.scanDir), m.width-12)) + "\n\n")
+	width := 0
+	for _, f := range m.found {
+		width = max(width, lipgloss.Width(f.Name))
+	}
+	end := min(m.scanTop+m.bodyHeight()-1, len(m.found))
+	for i := m.scanTop; i < end; i++ {
+		f := m.found[i]
+		box := "[ ]"
+		switch {
+		case f.Listed != "":
+			box = " ✓ "
+		case m.picked[i]:
+			box = "[x]"
+		}
+		path := tildePath(f.Dir)
+		if rel, err := filepath.Rel(m.scanDir, f.Dir); err == nil && rel != "." {
+			path = rel
+		}
+		tag := ""
+		if f.Listed != "" {
+			tag = " · added"
+		}
+		label := fmt.Sprintf("%s %-*s", box, width, f.Name)
+		path = truncate(path, m.width-lipgloss.Width(label)-4-len(tag))
+		if i == m.scanCursor {
+			out.WriteString(selectedStyle.Render("> "+label+"  "+path+tag) + "\n")
+		} else {
+			out.WriteString("  " + keyStyle.Render(label) + "  " + quietStyle.Render(path) + doneStyle.Render(tag) + "\n")
+		}
+	}
+
+	if m.naming {
+		status := "enter rename · esc cancel"
 		if m.repoErr != nil {
 			status = errorStyle.Render(m.repoErr.Error())
 		}
 		m.nameIn.Width = max(min(m.width/3, 30), 10)
 		return m.withFooter(out.String(), m.nameIn.View()+"  "+truncate(status, max(m.width-lipgloss.Width(m.nameIn.View())-2, 1)))
-	case m.repoErr != nil:
+	}
+	count := 0
+	for _, p := range m.picked {
+		if p {
+			count++
+		}
+	}
+	help := fmt.Sprintf("↑/↓ move · space pick · r rename · enter add %d · esc back", count)
+	if m.repoErr != nil {
 		help = errorStyle.Render(m.repoErr.Error())
 	}
 	return m.withFooter(out.String(), truncate(help, m.width))

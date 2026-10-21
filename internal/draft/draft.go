@@ -58,7 +58,7 @@ type Draft struct {
 	Elsewhere      []Elsewhere    `json:"elsewhere,omitempty"`
 	Relations      []Relation     `json:"relations"`
 	ApproachReview ApproachReview `json:"approach_review"`
-	OpenQuestions  []string       `json:"open_questions"`
+	OpenQuestions  []Choice       `json:"open_questions"`
 	// Checked is set once the stamped criteria were checked against the
 	// other open tickets; Duplicates is what that check found.
 	Checked    bool        `json:"checked,omitempty"`
@@ -261,6 +261,8 @@ func approachSection(approach string) string {
 // Request is what a draft run starts from.
 type Request struct {
 	Approach string
+	// Scope answers the triage's scope questions, keyed by question.
+	Scope map[string]string
 	// Previous is the draft being redone; its answers go to Claude.
 	Previous *Saved
 	// Resume continues Previous's session instead of reading the repos from scratch.

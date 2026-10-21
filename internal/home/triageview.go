@@ -61,7 +61,7 @@ func (m Model) openTriage() Model {
 func (m *Model) layoutTriage() {
 	m.pane.Width, m.pane.Height = max(m.width, 20), max(m.height-5, 1)
 	if triage, ok := m.triages[m.issues[m.cursor].Key]; ok {
-		m.pane.SetContent(renderTriage(triage.Triage, m.pane.Width))
+		m.pane.SetContent(renderTriage(triage.Triage, m.pane.Width, true))
 	} else {
 		m.pane.SetContent("")
 	}
@@ -132,8 +132,9 @@ func (m Model) viewTriaged() string {
 const triageMaxWidth = 59
 
 // renderTriage lays out a triage as bordered sections at the given width,
+// its scope questions too when withScope is set,
 // capped at triageMaxWidth.
-func renderTriage(t draft.Triage, width int) string {
+func renderTriage(t draft.Triage, width int, withScope bool) string {
 	width = min(width, triageMaxWidth)
 	inner := max(width-4, 10)
 	var all []string
@@ -157,11 +158,43 @@ func renderTriage(t draft.Triage, width int) string {
 	section("Problem", strings.Split(hang("", t.Problem, inner), "\n"))
 	section("Solution", strings.Split(hang("", t.Solution, inner), "\n"))
 	section("Blockers", bullets("⛔ ", t.Blockers))
-	section("Scope questions", bullets("? ", t.ScopeQuestions))
+	if withScope {
+		section("Scope questions", scopeLines(t.ScopeQuestions, inner))
+	}
 	if len(t.Relations) > 0 {
 		section("Related tickets", relationLines(t.Relations, inner))
 	}
 	return strings.Join(all, "\n")
+}
+
+// scopeLines lists the scope questions with their options, the recommended
+// one starred with its reason.
+func scopeLines(questions []draft.ScopeQuestion, width int) []string {
+	if len(questions) == 0 {
+		return []string{pendingStyle.Render("none")}
+	}
+	var lines []string
+	for i, q := range questions {
+		if i > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, strings.Split(titleStyle.Render(hang("? ", q.Question, width)), "\n")...)
+		for _, option := range q.Options {
+			star := ""
+			if option == q.Recommended {
+				star = keyStyle.Render(" ★")
+			}
+			lines = append(lines, strings.Split(hang("  • ", option+star, width), "\n")...)
+		}
+		advice := q.Why
+		if len(q.Options) == 0 {
+			advice = strings.TrimSuffix(q.Recommended+", "+q.Why, ", ")
+		}
+		if advice != "" {
+			lines = append(lines, quietStyle.Render(hang("  ★ ", advice, width)))
+		}
+	}
+	return lines
 }
 
 func relationLines(relations []draft.Relation, width int) []string {

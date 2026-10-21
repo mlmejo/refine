@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -37,6 +38,8 @@ type item struct {
 	kind  itemKind
 	index int    // into Draft.Split for a child
 	text  string // the question, for a question
+	// options are the question's choices, picked with 1-4 or space.
+	options []string
 }
 
 // span is the lines an item takes in the rendered draft.
@@ -58,8 +61,8 @@ func draftItems(d draft.Draft) []item {
 	for i := range d.Split {
 		items = append(items, item{kind: childItem, index: i})
 	}
-	for _, question := range d.OpenQuestions {
-		items = append(items, item{kind: questionItem, text: question})
+	for _, q := range d.OpenQuestions {
+		items = append(items, item{kind: questionItem, text: q.Question, options: q.Options})
 	}
 	return items
 }
@@ -165,6 +168,11 @@ func (m Model) updateDrafted(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	saved := m.current()
 	items := draftItems(saved.Draft)
 
+	if m.focus < len(items) {
+		if model, cmd, ok := m.pickOption(msg.String(), items[m.focus]); ok {
+			return model, cmd
+		}
+	}
 	switch msg.String() {
 	case "q":
 		return m, tea.Quit
@@ -351,34 +359,66 @@ func (m Model) updateAnswer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.layoutDraft()
 		return m, nil
 	case "enter":
-		saved := m.current()
-		question := draftItems(saved.Draft)[m.focus].text
-		answers := maps.Clone(saved.Answers)
-		if answers == nil {
-			answers = map[string]string{}
-		}
-		if answer := strings.TrimSpace(m.answerIn.Value()); answer == "" {
-			delete(answers, question)
-		} else {
-			answers[question] = answer
-		}
-		saved.Answers = answers
-		m.saved[saved.Key] = saved
-
 		m.answering = false
 		m.answerIn.Blur()
-		m.focus = nextUnanswered(saved, m.focus)
-		m.layoutDraft()
-		save := m.refiner.SaveAnswers
-		if save == nil {
-			return m, nil
-		}
-		return m, func() tea.Msg { return answerSavedMsg{err: save(saved)} }
+		return m.setAnswer(strings.TrimSpace(m.answerIn.Value()), true)
 	}
 	var cmd tea.Cmd
 	m.answerIn, cmd = m.answerIn.Update(msg)
 	m.layoutDraft()
 	return m, cmd
+}
+
+// setAnswer answers the focused question and saves it; next moves the
+// cursor on to the next unanswered question.
+func (m Model) setAnswer(answer string, next bool) (tea.Model, tea.Cmd) {
+	saved := m.current()
+	question := draftItems(saved.Draft)[m.focus].text
+	answers := maps.Clone(saved.Answers)
+	if answers == nil {
+		answers = map[string]string{}
+	}
+	if answer == "" {
+		delete(answers, question)
+	} else {
+		answers[question] = answer
+	}
+	saved.Answers = answers
+	m.saved[saved.Key] = saved
+	if next {
+		m.focus = nextUnanswered(saved, m.focus)
+	}
+	m.layoutDraft()
+	save := m.refiner.SaveAnswers
+	if save == nil {
+		return m, nil
+	}
+	return m, func() tea.Msg { return answerSavedMsg{err: save(saved)} }
+}
+
+// pickOption answers the focused question with one of its options: a digit
+// picks that option, 0 clears, space cycles through them.
+func (m Model) pickOption(key string, focused item) (tea.Model, tea.Cmd, bool) {
+	if focused.kind != questionItem || len(focused.options) == 0 {
+		return m, nil, false
+	}
+	current := slices.Index(focused.options, m.current().Answers[focused.text])
+	switch {
+	case key == "0":
+		model, cmd := m.setAnswer("", false)
+		return model, cmd, true
+	case key == " ":
+		current = (current + 1) % len(focused.options)
+	case len(key) == 1 && key[0] >= '1' && key[0] <= '9':
+		current = int(key[0] - '1')
+		if current >= len(focused.options) {
+			return m, nil, true
+		}
+	default:
+		return m, nil, false
+	}
+	model, cmd := m.setAnswer(focused.options[current], false)
+	return model, cmd, true
 }
 
 // nextUnanswered is the next question without an answer after from, or from
@@ -429,6 +469,9 @@ func (m Model) viewDrafted() string {
 		help = "↑/↓ move · enter answer · r next round with answers · S stamp · a redo approach · s markdown · esc back"
 	case draft.StepStamp:
 		help = "↑/↓ move · enter open/answer · w write to Jira · r more questions · S stamp again · a redo approach · s markdown · esc back"
+	}
+	if items := draftItems(saved.Draft); m.focus < len(items) && len(items[m.focus].options) > 0 {
+		help = fmt.Sprintf("1-%d pick · space next option · enter own answer · ", len(items[m.focus].options)) + strings.TrimPrefix(strings.Replace(help, "enter answer · ", "", 1), "↑/↓ move · ")
 	}
 	switch {
 	case m.answering:
@@ -516,7 +559,8 @@ func renderDraft(saved draft.Saved, width, focus int, answer string) (string, []
 		}
 		return lines
 	}
-	question := func(lines []string, text string) []string {
+	question := func(lines []string, q draft.Choice) []string {
+		text := q.Question
 		focused := stop == focus
 		state := "○ "
 		reply := strings.TrimSpace(saved.Answers[text])
@@ -524,15 +568,33 @@ func renderDraft(saved draft.Saved, width, focus int, answer string) (string, []
 			state = "✓ "
 		}
 		body := strings.Split(hang(state, text, inner-1), "\n")
+		for i, option := range q.Options {
+			dot := "( ) "
+			if reply == option {
+				dot = doneStyle.Render("(•) ")
+			}
+			star := ""
+			if option == q.Recommended {
+				star = keyStyle.Render(" ★")
+			}
+			body = append(body, strings.Split(hang(fmt.Sprintf("  %d %s", i+1, dot), option+star, inner-1), "\n")...)
+		}
+		picked := slices.Contains(q.Options, reply)
 		switch {
 		case focused && answer != "":
 			body = append(body, "  "+answer)
+		case picked:
 		case reply != "":
 			body = append(body, answerStyle.Render(hang("  ↳ ", reply, inner-1)))
 		case saved.Step == draft.StepStamp:
 			body = append(body, pendingStyle.Render("  ↳ still open: stamped without an answer"))
+		case len(q.Options) == 0 && q.Recommended != "":
+			body = append(body, pendingStyle.Render(hang("  ↳ ", "needs an answer · suggested: "+q.Recommended, inner-1)))
 		default:
 			body = append(body, pendingStyle.Render("  ↳ needs an answer"))
+		}
+		if focused && q.Why != "" {
+			body = append(body, quietStyle.Render(hang("  ★ ", q.Why, inner-1)))
 		}
 		if focused {
 			body[0] = focusStyle.Render(body[0])
@@ -593,7 +655,7 @@ func renderDraft(saved draft.Saved, width, focus int, answer string) (string, []
 		deploy = append(deploy, pendingStyle.Render("none"))
 	}
 	for _, blocker := range d.Deployment.Blockers {
-		deploy = question(deploy, blocker)
+		deploy = question(deploy, draft.Choice{Question: blocker})
 	}
 	place("Deployment", deploy)
 
@@ -639,8 +701,8 @@ func renderDraft(saved draft.Saved, width, focus int, answer string) (string, []
 	if len(d.OpenQuestions) == 0 {
 		questions = append(questions, pendingStyle.Render("none"))
 	}
-	for _, text := range d.OpenQuestions {
-		questions = question(questions, text)
+	for _, q := range d.OpenQuestions {
+		questions = question(questions, q)
 	}
 	total := len(d.Questions())
 	place(fmt.Sprintf("Open questions · %d/%d answered", total-saved.Unanswered(), total), questions)

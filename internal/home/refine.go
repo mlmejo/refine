@@ -126,9 +126,11 @@ func (m *Model) loadTriage(key string) {
 func (m Model) openApproach() (tea.Model, tea.Cmd) {
 	key := m.issues[m.cursor].Key
 	m.input.Reset()
-	if saved, ok := m.saved[key]; ok {
+	saved, ok := m.saved[key]
+	if ok {
 		m.input.SetValue(saved.Approach)
 	}
+	m.openScope(saved, ok)
 	m.screen, m.draftErr = approach, nil
 	m.resizeRefine()
 	return m, m.input.Focus()
@@ -147,7 +149,13 @@ func (m *Model) resizeRefine() {
 	if m.screen == triaged && len(m.issues) > 0 {
 		m.layoutTriage()
 	}
-	m.input.SetHeight(max(m.height-8, 3))
+	scope := 0
+	if m.screen == approach && len(m.issues) > 0 {
+		if block := m.renderScope(max(inputWidth-2, 20)); block != "" {
+			scope = lipgloss.Height(block) + 1
+		}
+	}
+	m.input.SetHeight(max(m.height-8-scope, 3))
 	if m.screen == drafted && len(m.issues) > 0 {
 		m.layoutDraft()
 	}
@@ -242,7 +250,25 @@ func (m Model) updateRefine(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch m.screen {
 		case approach:
+			if msg.String() == "ctrl+s" {
+				req := draft.Request{Approach: m.input.Value(), Scope: m.scopeAnswers()}
+				if saved, ok := m.saved[m.issues[m.cursor].Key]; ok {
+					req.Previous = &saved
+				}
+				m.scopeFocus, m.scopeEditing = false, false
+				return m.gate(&req)
+			}
+			if m.scopeFocus {
+				return m.updateScope(msg)
+			}
 			switch msg.String() {
+			case "tab":
+				if len(m.scopeQuestions()) > 0 {
+					m.scopeFocus = true
+					m.input.Blur()
+					m.resizeRefine()
+					return m, nil
+				}
 			case "esc":
 				m.screen = detail
 				m.input.Blur()
@@ -254,12 +280,6 @@ func (m Model) updateRefine(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.sidePane.HalfPageDown()
 				}
 				return m, nil
-			case "ctrl+s":
-				req := draft.Request{Approach: m.input.Value()}
-				if saved, ok := m.saved[m.issues[m.cursor].Key]; ok {
-					req.Previous = &saved
-				}
-				return m.gate(&req)
 			}
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
@@ -351,7 +371,8 @@ func (m Model) renderSide(width int) string {
 	key := m.issues[m.cursor].Key
 	var parts []string
 	if triage, ok := m.triages[key]; ok {
-		parts = append(parts, renderTriage(triage.Triage, width))
+		// The scope questions are answered beside it, so they are left out.
+		parts = append(parts, renderTriage(triage.Triage, width, false))
 	}
 	if brief, ok := m.briefs[key]; ok {
 		parts = append(parts, renderBrief(brief, width))
@@ -364,12 +385,25 @@ func (m Model) viewApproach() string {
 	var out strings.Builder
 	out.WriteString(lipgloss.NewStyle().Width(inputWidth).Render(quietStyle.Render(
 		"Write what you know, in a few lines. Mark anything you're unsure of with ? and Claude answers it from the code. Empty is fine too.")) + "\n\n")
+	if block := m.renderScope(max(inputWidth-2, 20)); block != "" {
+		out.WriteString(block + "\n\n")
+	}
 	out.WriteString(m.input.View() + "\n")
 	if m.draftErr != nil {
 		out.WriteString(lipgloss.NewStyle().Width(inputWidth).Render(errorStyle.Render(m.draftErr.Error())) + "\n")
 	}
 	body := out.String()
 	help := "ctrl+s ask Claude's questions · esc back"
+	if m.scopeFocus {
+		help = "↑/↓ question · ←/→ pick · enter own answer · r recommended · R all recommended · tab approach · ctrl+s ask"
+		if m.scopeEditing {
+			help = "enter save · esc cancel"
+		}
+		return m.withFooter(m.ticketHeader()+"\n"+body+"\n", truncate(help, m.width))
+	}
+	if len(m.scopeQuestions()) > 0 {
+		help = "ctrl+s ask Claude's questions · tab scope questions · esc back"
+	}
 	if briefWidth > 0 {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().Width(inputWidth).Render(body), m.sidePane.View())
 		help = "ctrl+s ask Claude's questions · pgup/pgdn scroll triage and brief · esc back"
@@ -403,9 +437,10 @@ func (m Model) viewDrafting() string {
 }
 
 // hang wraps text after a marker, indenting following lines under the text.
+// The text's inline markdown shows as styles.
 func hang(marker, text string, width int) string {
 	indent := lipgloss.Width(marker)
-	wrapped := lipgloss.NewStyle().Width(max(width-indent-1, 10)).Render(text)
+	wrapped := lipgloss.NewStyle().Width(max(width-indent-1, 10)).Render(inline(text))
 	lines := strings.Split(wrapped, "\n")
 	for i := range lines {
 		lines[i] = strings.TrimRight(lines[i], " ")

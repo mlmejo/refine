@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -104,7 +105,7 @@ func TestRunParsesStructuredOutput(t *testing.T) {
 	if got.SessionID != "s-1" || got.CostUSD != 0.87 || got.Draft.Points != 3 || got.Turns != 28 || got.Usage != (Usage{Input: 24, CacheWrite: 68985, CacheRead: 712326, Output: 8974}) {
 		t.Errorf("result = %+v", got)
 	}
-	if got.Draft.TechnicalImplementation[0].Files[0] != (File{Path: "a.vue", New: true}) || got.Draft.OpenQuestions[0] != "How is it deployed?" {
+	if got.Draft.TechnicalImplementation[0].Files[0] != (File{Path: "a.vue", New: true}) || got.Draft.OpenQuestions[0].Question != "How is it deployed?" {
 		t.Errorf("draft = %+v", got.Draft)
 	}
 	cwd, _ := os.ReadFile(cwdFile)
@@ -187,15 +188,15 @@ func TestStampForksTheQuestionsSession(t *testing.T) {
 		t.Errorf("args: %s", args)
 	}
 
-	d := Draft{Problem: "p", Findings: []string{"f"}, OpenQuestions: []string{"q"}}.WithStamp(stamp)
-	if d.Points != 1 || d.AcceptanceCriteria[0] != "QA sees it." || d.Problem != "p" || d.Findings[0] != "f" || d.OpenQuestions[0] != "q" {
+	d := Draft{Problem: "p", Findings: []string{"f"}, OpenQuestions: []Choice{{Question: "q"}}}.WithStamp(stamp)
+	if d.Points != 1 || d.AcceptanceCriteria[0] != "QA sees it." || d.Problem != "p" || d.Findings[0] != "f" || d.OpenQuestions[0].Question != "q" {
 		t.Errorf("stamped draft = %+v", d)
 	}
 }
 
 func TestStampPromptCarriesAnswersAndOpenQuestions(t *testing.T) {
 	saved := Saved{
-		Draft:   Draft{Deployment: Deployment{Blockers: []string{"Who sets the env?"}}, OpenQuestions: []string{"Server count or client count?", "Reset on open?"}},
+		Draft:   Draft{Deployment: Deployment{Blockers: []string{"Who sets the env?"}}, OpenQuestions: []Choice{{Question: "Server count or client count?"}, {Question: "Reset on open?"}}},
 		Answers: map[string]string{"Server count or client count?": "server"},
 	}
 	got := StampPrompt(saved, nil)
@@ -205,7 +206,7 @@ func TestStampPromptCarriesAnswersAndOpenQuestions(t *testing.T) {
 	if !strings.Contains(got, "proceed with these still open") || !strings.Contains(got, "- Who sets the env?\n- Reset on open?\n") {
 		t.Errorf("open questions missing:\n%s", got)
 	}
-	if got := StampPrompt(Saved{Draft: Draft{OpenQuestions: []string{"a"}}, Answers: map[string]string{"a": "yes"}}, nil); strings.Contains(got, "still open") {
+	if got := StampPrompt(Saved{Draft: Draft{OpenQuestions: []Choice{{Question: "a"}}}, Answers: map[string]string{"a": "yes"}}, nil); strings.Contains(got, "still open") {
 		t.Errorf("all answered, yet:\n%s", got)
 	}
 	if strings.Contains(got, "Other open tickets") {
@@ -285,15 +286,28 @@ func TestStepsAndTriage(t *testing.T) {
 
 	triage := Triage{
 		Problem: "Counts go stale.", Solution: "Live counts.",
-		Blockers:       []string{"GEEK-5 blocks the reset"},
-		ScopeQuestions: []string{"Pop-ups too?"},
-		Relations:      []Relation{{Key: "GEEK-6", Kind: "needs", Why: "the badge criterion"}},
+		Blockers: []string{"GEEK-5 blocks the reset"},
+		ScopeQuestions: []ScopeQuestion{
+			{Question: "Pop-ups too?", Options: []string{"yes", "no"}, Recommended: "no", Why: "separate ticket"},
+			{Question: "Reset on logout?", Options: []string{"yes", "no"}, Recommended: "yes"},
+		},
+		Relations: []Relation{{Key: "GEEK-6", Kind: "needs", Why: "the badge criterion"}},
 	}
-	got := triage.Prompt()
-	for _, want := range []string{"Problem: Counts go stale.", "Blockers already known:\n- GEEK-5 blocks the reset", "Scope questions:\n- Pop-ups too?", "needs GEEK-6: the badge criterion"} {
+	got := triage.Prompt(map[string]string{"Reset on logout?": "no, keep it"})
+	for _, want := range []string{
+		"Problem: Counts go stale.",
+		"Blockers already known:\n- GEEK-5 blocks the reset",
+		"Scope questions:\n- Pop-ups too? Options: yes; no. Recommended: no, separate ticket.\n",
+		"needs GEEK-6: the badge criterion",
+		"do not ask them again:\n- Q: Reset on logout?\n  A: \"no, keep it\"",
+	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("triage prompt missing %q:\n%s", want, got)
 		}
+	}
+	// An answered scope question is no longer listed as open.
+	if strings.Contains(got, "- Reset on logout? Options") {
+		t.Errorf("answered question still open:\n%s", got)
 	}
 
 	d := triage.Apply(Draft{Findings: []string{"f"}})
@@ -323,7 +337,7 @@ func TestQuestionsAndAnswers(t *testing.T) {
 	saved := Saved{
 		Draft: Draft{
 			Deployment:    Deployment{Blockers: []string{"Which host deploys?"}},
-			OpenQuestions: []string{"Keep the client event?", "Which queue?"},
+			OpenQuestions: []Choice{{Question: "Keep the client event?"}, {Question: "Which queue?"}},
 		},
 		Answers: map[string]string{"Which host deploys?": "Forge", "Keep the client event?": " "},
 	}
@@ -463,5 +477,46 @@ func TestOthersPromptListsOtherTickets(t *testing.T) {
 	}
 	if OthersPrompt("GEEK-1", others[:1]) != "" {
 		t.Error("prompt for no other tickets")
+	}
+}
+
+func TestScopeQuestionReadsTheOldOneLineForm(t *testing.T) {
+	var triage Triage
+	data := `{"scope_questions":[
+		"Is fixing the StarVault predicate part of this ticket? (a) yes, fix the query side here; (b) no, raise a separate StarVault ticket → (b), it lives in a different system.",
+		"What does matches legacy cover? → the header only, the ticket names it",
+		{"question":"New?","options":["a","b"],"recommended":"b","why":"w"}
+	]}`
+	if err := json.Unmarshal([]byte(data), &triage); err != nil {
+		t.Fatal(err)
+	}
+	want := []ScopeQuestion{
+		{Question: "Is fixing the StarVault predicate part of this ticket?", Options: []string{"yes, fix the query side here", "no, raise a separate StarVault ticket"}, Recommended: "no, raise a separate StarVault ticket", Why: "it lives in a different system."},
+		{Question: "What does matches legacy cover?", Recommended: "the header only", Why: "the ticket names it"},
+		{Question: "New?", Options: []string{"a", "b"}, Recommended: "b", Why: "w"},
+	}
+	for i, q := range triage.ScopeQuestions {
+		if fmt.Sprintf("%#v", q) != fmt.Sprintf("%#v", want[i]) {
+			t.Errorf("question %d = %#v\nwant %#v", i, q, want[i])
+		}
+	}
+}
+
+func TestOpenQuestionsReadOldTextWhole(t *testing.T) {
+	var d Draft
+	old := "Balance link: also send click_header_buy_credits? Options: (a) mirror GoNaughty; (b) buttons only."
+	data := `{"open_questions":[` + strconv.Quote(old) + `,{"question":"Rename?","options":["yes","no"],"recommended":"yes","why":"consistency"}]}`
+	if err := json.Unmarshal([]byte(data), &d); err != nil {
+		t.Fatal(err)
+	}
+	// The old text stays whole, so the answer saved against it still matches.
+	if d.OpenQuestions[0].Question != old || d.OpenQuestions[0].Options != nil {
+		t.Errorf("old question = %#v", d.OpenQuestions[0])
+	}
+	if got := d.Questions(); len(got) != 2 || got[1] != "Rename?" {
+		t.Errorf("questions = %v", got)
+	}
+	if got := d.OpenQuestions[1].String(); got != "Rename? Options: yes; no. Recommended: yes, consistency." {
+		t.Errorf("string = %q", got)
 	}
 }

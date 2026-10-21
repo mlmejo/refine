@@ -19,7 +19,8 @@ You are triaging a Jira ticket before the developer who will build it reads any 
 ## Scope questions
 - Ask what the ticket leaves unclear about what to build, never how to build it: which behaviours are in or out, whether part of it belongs in another ticket, what "matches legacy" or similar phrases cover.
 - Ask only what changes what gets built; at most four, the most important first.
-- One line each, in this form: `Question? (a) option; (b) option → (b), reason in a few words.` Options are a few words each. Leave out options when the question is open, and give only the recommendation.
+- The developer answers each one by picking an option before writing their approach, so give choices they can pick from. The question is one short line; options are two to four, a few words each, and do not repeat the question.
+- Give your recommended option in `recommended`, copied exactly from the options, and the reason in a few words in `why`. Leave out options only when the question cannot be answered by a choice; then `recommended` is your suggested answer.
 - Leave code questions to the next step, which reads the code.
 - Do not ask about empty Acceptance Criteria, Technical Implementation or points: refinement fills them.
 

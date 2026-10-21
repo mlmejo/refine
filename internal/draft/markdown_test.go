@@ -156,7 +156,7 @@ func TestMarkdownFollowsTheSteps(t *testing.T) {
 			Problem: "Counts go stale.", Solution: "Live counts.",
 			TicketBlockers: []string{"GEEK-5 blocks the reset"},
 			Findings:       []string{"echo.client.ts:73 connects on login"},
-			OpenQuestions:  []string{"Server count?", "Reset on open?"},
+			OpenQuestions:  []Choice{{Question: "Server count?"}, {Question: "Reset on open?"}},
 		},
 		Answers: map[string]string{"Server count?": "yes"},
 	}

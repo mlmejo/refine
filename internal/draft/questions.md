@@ -15,11 +15,15 @@ You are refining a Jira ticket with the developer who will build it. This step s
 - Each design decision the build must make, such as where a value comes from, how state reaches a client, ordering, lifecycle or error handling, is an open question with its options and your recommendation. Do not settle it for the developer in the approach review.
 - When you find a risk in a path already chosen, by you or the developer, reopen that decision as an open question with the risk and the options. Do not file it as a note to keep in mind.
 - A ticket that adds a package or spans repos rarely has no open questions. Check again before you return none.
+- Write each open question short. The question is one line under 20 words, with at most one `path:line`; leave the code tour to findings. Give two to four options of a few words each that the developer can pick from, copy your pick into `recommended`, and give the reason in under 12 words. Leave out options only when no choice fits.
 
 ## Findings
-- Findings are what the code shows that the decisions rest on: how the area works today, what already exists, and what the original does when the repo is a rewrite. One fact each, with the file and lines you read.
+- Findings are what the code shows that the decisions rest on: how the area works today, what already exists, and what the original does when the repo is a rewrite.
+- Write each finding as its answer, not the trail to it: one short sentence, under 20 words, then one `path:line` citation. "Shagtoday's buy-credits links lack `data-sv-event`, so D01 clicks read zero (`dating/components/navbar.vue:169`)", not a paragraph walking through the predicate.
+- No quoted code, no line-by-line tours, no restating what another finding says. Merge findings about the same thing; list several locations as one citation, e.g. `header.vue:26,53,110`.
+- Keep only findings a decision or the write-up needs; aim for six or fewer.
 - Keep findings to facts. A finding that leaves a choice open is also an open question.
-- The ticket's triage, when given, names its problem, the solution it asks for, blockers already known and scope questions. Raise each scope question as an open question unless the approach settles it.
+- The ticket's triage, when given, names its problem, the solution it asks for, blockers already known and scope questions. Raise each scope question still listed as an open question unless the approach settles it. Scope questions the developer answered are settled: build on the answer and do not ask it again, in other words either.
 
 ## Deployment
 - Find out how each affected repo deploys so the write-up can rate deployment complexity. Look for deploy workflows, Envoy or deploy scripts, Dockerfiles, Forge or Envoyer notes, and deploy docs in the repo.

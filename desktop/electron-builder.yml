@@ -1,0 +1,14 @@
+appId: com.mlmejo.refine
+productName: refine
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+extraResources:
+  # The Go backend, built by `pnpm go:build`.
+  - from: ../bin/refine
+    to: refine
+mac:
+  target: dir
+  category: public.app-category.developer-tools

@@ -2,8 +2,10 @@ package draft
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mlmejo/refine/internal/jira"
@@ -110,6 +112,14 @@ func Markdown(saved Saved, summary string) string {
 	} else {
 		out.WriteString("> " + strings.ReplaceAll(approach, "\n", "\n> ") + "\n")
 	}
+	if scope := ScopePrompt(saved.Scope); scope != "" {
+		out.WriteString("\n## Scope answers\n\n")
+		for _, question := range slices.Sorted(maps.Keys(saved.Scope)) {
+			if answer := strings.TrimSpace(saved.Scope[question]); answer != "" {
+				fmt.Fprintf(&out, "- %s **%s**\n", question, answer)
+			}
+		}
+	}
 
 	if len(d.Findings) > 0 || !saved.Stamped() {
 		out.WriteString("\n## Findings\n\n")
@@ -149,7 +159,7 @@ func Markdown(saved Saved, summary string) string {
 		bullets(&out, "-", part.items)
 	}
 	out.WriteString("\n### Blockers\n\n")
-	answered(&out, d.Deployment.Blockers, saved)
+	answered(&out, blockerChoices(d.Deployment.Blockers), saved)
 
 	if len(d.Split) > 0 {
 		out.WriteString("\n## Split\n\n")
@@ -202,19 +212,28 @@ func Markdown(saved Saved, summary string) string {
 
 // answered lists the questions with their answers. A stamped draft marks the
 // ones the developer proceeded with unanswered.
-func answered(out *strings.Builder, questions []string, saved Saved) {
+func answered(out *strings.Builder, questions []Choice, saved Saved) {
 	if len(questions) == 0 {
 		out.WriteString("_None._\n")
 	}
-	for _, question := range questions {
-		out.WriteString("- " + question + "\n")
-		switch answer := strings.TrimSpace(saved.Answers[question]); {
+	for _, q := range questions {
+		out.WriteString("- " + q.String() + "\n")
+		switch answer := strings.TrimSpace(saved.Answers[q.Question]); {
 		case answer != "":
 			out.WriteString("  - **Answer:** " + strings.ReplaceAll(answer, "\n", " ") + "\n")
 		case saved.Step == StepStamp:
 			out.WriteString("  - _Still open: stamped without an answer._\n")
 		}
 	}
+}
+
+// blockerChoices are deploy blockers as questions, which have no options.
+func blockerChoices(blockers []string) []Choice {
+	choices := make([]Choice, len(blockers))
+	for i, blocker := range blockers {
+		choices[i] = Choice{Question: blocker}
+	}
+	return choices
 }
 
 func repoFiles(out *strings.Builder, repos []RepoFiles) {

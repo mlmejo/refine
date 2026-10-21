@@ -31,7 +31,7 @@ var sample = draft.Saved{
 		}},
 		ApproachReview: draft.ApproachReview{Misses: []string{"The dating routes skip the api middleware."}},
 		Deployment:     draft.Deployment{Platform: "Laravel Forge", Blockers: []string{"Forge needs a deploy key for the private SDK."}},
-		OpenQuestions:  []string{"How does dating-backend deploy?"},
+		OpenQuestions:  []draft.Choice{{Question: "How does dating-backend deploy?"}},
 	},
 }
 

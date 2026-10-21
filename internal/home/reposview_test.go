@@ -55,18 +55,15 @@ func TestReposScreenAddsAGitRepoFromTheBrowser(t *testing.T) {
 		t.Errorf("browser view:\n%s", view)
 	}
 
-	// notes is not a git repo; dating is already listed.
-	if m = press(t, m, "j", "a"); m.naming || m.repoErr == nil {
-		t.Errorf("picked notes: naming %v, err %v", m.naming, m.repoErr)
-	}
-	m = press(t, m, "k", "k", "a")
-	if m.naming || m.repoErr == nil || !strings.Contains(m.repoErr.Error(), "already listed") {
-		t.Errorf("picked dating: naming %v, err %v", m.naming, m.repoErr)
+	// notes holds no git repo.
+	if m = press(t, m, "j", "a"); m.screen != browse || m.repoErr == nil {
+		t.Errorf("scanned notes: screen %v, err %v", m.screen, m.repoErr)
 	}
 
-	m = press(t, m, "j", "j", "a")
-	if !m.naming || m.nameIn.Value() != "wannahookup" {
-		t.Fatalf("naming %v, name %q", m.naming, m.nameIn.Value())
+	// a on one checkout scans just it, picked and named after its folder.
+	m = press(t, m, "j", "a")
+	if m.screen != scanned || len(m.found) != 1 || m.found[0].Name != "wannahookup" || !m.picked[0] {
+		t.Fatalf("screen %v, found %+v, picked %v", m.screen, m.found, m.picked)
 	}
 	m = press(t, m, "enter")
 	if m.screen != repos || m.source.Repos()["wannahookup"] != filepath.Join(root, "wannahookup") {
@@ -74,6 +71,47 @@ func TestReposScreenAddsAGitRepoFromTheBrowser(t *testing.T) {
 	}
 	if !strings.Contains(m.View(), "added wannahookup") {
 		t.Errorf("view:\n%s", m.View())
+	}
+}
+
+func TestScanAddsEveryPickedRepoUnderAFolder(t *testing.T) {
+	m, root, _ := withRepos(t)
+	if err := os.MkdirAll(filepath.Join(root, "notes", "gonaughty", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// . scans the folder the browser shows.
+	m = press(t, m, "R", "a", ".")
+	if m.screen != scanned || len(m.found) != 3 {
+		t.Fatalf("screen %v, found %+v", m.screen, m.found)
+	}
+	view := m.View()
+	for _, want := range []string{"✓  dating", "[x] gonaughty", "notes/gonaughty", "[x] wannahookup"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view has no %q:\n%s", want, view)
+		}
+	}
+
+	// Unpick wannahookup, rename gonaughty, add.
+	m = press(t, m, "j", "j", " ", "k", "r")
+	if !m.naming {
+		t.Fatal("r did not rename")
+	}
+	m.nameIn.SetValue("gn")
+	m = press(t, m, "enter", "enter")
+	got := m.source.Repos()
+	if m.screen != repos || got["gn"] != filepath.Join(root, "notes", "gonaughty") || got["wannahookup"] != "" || len(got) != 2 {
+		t.Errorf("screen %v, repos %v", m.screen, got)
+	}
+}
+
+func TestScanWithNothingPickedSaysSo(t *testing.T) {
+	m, _, _ := withRepos(t)
+	m = press(t, m, "R", "a", "a") // dating, already added
+	if m.screen != scanned || m.picked[0] {
+		t.Fatalf("screen %v, picked %v", m.screen, m.picked)
+	}
+	if m = press(t, m, " ", "enter"); m.screen != scanned || m.repoErr == nil {
+		t.Errorf("screen %v, err %v", m.screen, m.repoErr)
 	}
 }
 

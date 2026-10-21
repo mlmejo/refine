@@ -29,6 +29,9 @@ type Saved struct {
 	Markdown string `json:"markdown,omitempty"`
 	// Answers are the team's answers, keyed by question.
 	Answers map[string]string `json:"answers,omitempty"`
+	// Scope are the developer's answers to the triage's scope questions,
+	// given with the approach, keyed by question.
+	Scope map[string]string `json:"scope,omitempty"`
 	// Children are the Jira keys of the split tickets already created from
 	// this draft, by index into Draft.Split.
 	Children map[int]string `json:"children,omitempty"`
@@ -47,7 +50,11 @@ func (s Saved) Stamped() bool {
 
 // Questions are the deploy blockers and open questions the team must answer.
 func (d Draft) Questions() []string {
-	return append(slices.Clone(d.Deployment.Blockers), d.OpenQuestions...)
+	questions := slices.Clone(d.Deployment.Blockers)
+	for _, q := range d.OpenQuestions {
+		questions = append(questions, q.Question)
+	}
+	return questions
 }
 
 // Unanswered counts the questions without an answer.

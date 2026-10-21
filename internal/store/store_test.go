@@ -57,7 +57,7 @@ func TestAddKeepsEveryVersionWithItsMarkdown(t *testing.T) {
 
 func TestSaveAnswersPersistsAndRewritesMarkdown(t *testing.T) {
 	s := open(t, t.TempDir())
-	saved, err := s.Add(draft.Saved{Key: "GEEK-3", Draft: draft.Draft{OpenQuestions: []string{"Which queue?"}}}, "SDK")
+	saved, err := s.Add(draft.Saved{Key: "GEEK-3", Draft: draft.Draft{OpenQuestions: []draft.Choice{{Question: "Which queue?"}}}}, "SDK")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,17 +100,21 @@ func TestSaveChildrenPersistsAndRewritesMarkdown(t *testing.T) {
 func TestOpenMigratesVersionOneDatabase(t *testing.T) {
 	dir := t.TempDir()
 	s := open(t, dir)
-	if _, err := s.db.Exec(`ALTER TABLE drafts DROP COLUMN answers; ALTER TABLE drafts DROP COLUMN session_cost_usd; ALTER TABLE drafts DROP COLUMN turns; ALTER TABLE drafts DROP COLUMN usage; ALTER TABLE drafts DROP COLUMN children; ALTER TABLE drafts DROP COLUMN step; DROP TABLE outlines; DROP TABLE briefs; DROP TABLE triages; PRAGMA user_version = 1`); err != nil {
+	if _, err := s.db.Exec(`ALTER TABLE drafts DROP COLUMN answers; ALTER TABLE drafts DROP COLUMN session_cost_usd; ALTER TABLE drafts DROP COLUMN turns; ALTER TABLE drafts DROP COLUMN usage; ALTER TABLE drafts DROP COLUMN children; ALTER TABLE drafts DROP COLUMN step; ALTER TABLE drafts DROP COLUMN scope; DROP TABLE outlines; DROP TABLE briefs; DROP TABLE triages; DROP TABLE events; PRAGMA user_version = 1`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
 
 	s = open(t, dir)
-	if _, err := s.Add(draft.Saved{Key: "GEEK-4", Answers: map[string]string{"q": "no"}}, ""); err != nil {
+	if _, err := s.Add(draft.Saved{Key: "GEEK-4", Answers: map[string]string{"q": "no"}, Scope: map[string]string{"Pop-ups?": "no"}}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if latest, _, _ := s.Latest("GEEK-4"); latest.Answers["q"] != "no" || !latest.Stamped() {
-		t.Errorf("answers = %v, stamped = %v", latest.Answers, latest.Stamped())
+	latest, _, _ := s.Latest("GEEK-4")
+	if latest.Answers["q"] != "no" || !latest.Stamped() || latest.Scope["Pop-ups?"] != "no" {
+		t.Errorf("answers = %v, stamped = %v, scope = %v", latest.Answers, latest.Stamped(), latest.Scope)
+	}
+	if data, _ := os.ReadFile(latest.Markdown); !strings.Contains(string(data), "## Scope answers\n\n- Pop-ups? **no**") {
+		t.Errorf("markdown:\n%s", data)
 	}
 }
 
@@ -184,5 +188,24 @@ func TestBriefsKeepTheLatestPerTicket(t *testing.T) {
 	if !ok || err != nil || got.ID != added.ID || got.SessionID != "s-2" || got.Ref != "develop" || got.Turns != 12 ||
 		got.Usage.Output != 4000 || got.Brief.Summary != "new" || got.Brief.Parts[0].Role != "card" {
 		t.Errorf("latest = %+v ok %v err %v", got, ok, err)
+	}
+}
+
+func TestEventsRoundTrip(t *testing.T) {
+	s := open(t, t.TempDir())
+	at := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
+	if err := s.AddEvent(Event{At: at, UI: "gui", Session: "s1", Name: "view", Key: "GEEK-1", Props: map[string]any{"tab": "draft"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddEvent(Event{At: at.Add(time.Minute), UI: "gui", Session: "s1", Name: "run"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Events(at.Add(time.Second))
+	if err != nil || len(got) != 1 || got[0].Name != "run" || got[0].Props == nil {
+		t.Fatalf("events since = %+v, %v", got, err)
+	}
+	all, _ := s.Events(time.Time{})
+	if len(all) != 2 || all[0].Props["tab"] != "draft" || all[0].Key != "GEEK-1" {
+		t.Errorf("events = %+v", all)
 	}
 }

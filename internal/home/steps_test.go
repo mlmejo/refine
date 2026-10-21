@@ -21,7 +21,7 @@ var sampleTriage = draft.SavedTriage{
 		Problem:        "Counts only update on /messages.",
 		Solution:       "Counts update live on every page.",
 		Blockers:       []string{"GEEK-5 (To Do) blocks the badge reset"},
-		ScopeQuestions: []string{"Pop-ups too, or counts only?"},
+		ScopeQuestions: []draft.ScopeQuestion{{Question: "Pop-ups too?", Options: []string{"counts only", "pop-ups too"}, Recommended: "counts only", Why: "smaller ticket"}},
 		Relations:      []draft.Relation{{Key: "GEEK-6", Kind: "needs", Why: "the badge criterion"}},
 	},
 }
@@ -89,7 +89,7 @@ func TestTriageFeedsTheApproachAndTheQuestions(t *testing.T) {
 	next, _ = m.Update(awaitMsg[triagedMsg](t, cmd))
 	m = next.(Model)
 	view := m.View()
-	for _, want := range []string{"triage · $0.04", "Counts only update on /messages.", "⛔ GEEK-5 (To Do) blocks the badge reset", "? Pop-ups too, or counts only?", "needs GEEK-6"} {
+	for _, want := range []string{"triage · $0.04", "Counts only update on /messages.", "⛔ GEEK-5 (To Do) blocks the badge reset", "? Pop-ups too?", "counts only ★", "needs GEEK-6"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("triage view missing %q:\n%s", want, view)
 		}
@@ -99,11 +99,29 @@ func TestTriageFeedsTheApproachAndTheQuestions(t *testing.T) {
 	if m.screen != approach || !strings.Contains(m.View(), "Counts update live on every page.") {
 		t.Fatalf("approach without the triage beside it:\n%s", m.View())
 	}
-	m = press(t, m, "Counts only.")
+	// tab moves to the scope questions; l picks the first option.
+	m = press(t, m, "tab", "l")
+	if !strings.Contains(m.View(), "(•) counts only") || !strings.Contains(m.View(), "Scope · 1/1 answered") {
+		t.Fatalf("scope not picked:\n%s", m.View())
+	}
+	// l cycles through the options and back to unanswered; h goes back; r
+	// takes the recommendation; enter answers in words.
+	for _, step := range []struct{ key, want string }{
+		{"l", "pop-ups too"}, {"l", ""}, {"h", "pop-ups too"}, {"x", ""}, {"r", "counts only"},
+	} {
+		if m = press(t, m, step.key); m.scope["Pop-ups too?"] != step.want {
+			t.Fatalf("after %s: scope = %q, want %q", step.key, m.scope["Pop-ups too?"], step.want)
+		}
+	}
+	m = press(t, m, "enter", "popups later", "enter")
+	if m.scope["Pop-ups too?"] != "popups later" || !strings.Contains(m.View(), "↳ popups later") {
+		t.Fatalf("own answer: %q\n%s", m.scope["Pop-ups too?"], m.View())
+	}
+	m = press(t, m, "r", "tab", "Counts only.")
 	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
 	next, _ = next.(Model).Update(awaitDraft(t, cmd))
 	m = next.(Model)
-	if got.Triage == nil || got.Triage.Triage.Problem != "Counts only update on /messages." || got.Approach != "Counts only." {
+	if got.Triage == nil || got.Triage.Triage.Problem != "Counts only update on /messages." || got.Approach != "Counts only." || got.Scope["Pop-ups too?"] != "counts only" {
 		t.Errorf("request = %+v", got)
 	}
 	if m.screen != drafted {

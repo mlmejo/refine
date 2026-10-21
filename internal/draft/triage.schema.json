@@ -27,8 +27,36 @@
     "scope_questions": {
       "type": "array",
       "items": {
-        "type": "string",
-        "description": "One line: 'Question? (a) option; (b) option \u2192 (b), short reason.'"
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question",
+          "options",
+          "recommended",
+          "why"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "One short line asking what to build, ending in a question mark."
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "A few words; does not repeat the question."
+            },
+            "description": "Two to four choices the developer picks from; empty only when no choice fits."
+          },
+          "recommended": {
+            "type": "string",
+            "description": "The recommended option, copied exactly from options; the suggested answer when options is empty."
+          },
+          "why": {
+            "type": "string",
+            "description": "The reason for the recommendation, in a few words."
+          }
+        }
       }
     },
     "relations": {

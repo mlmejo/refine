@@ -18,11 +18,11 @@ var triageSchema string
 // Triage is the first step: what the ticket is for and what stands in its
 // way, judged from Jira alone before anyone reads code.
 type Triage struct {
-	Problem        string     `json:"problem"`
-	Solution       string     `json:"solution"`
-	Blockers       []string   `json:"blockers"`
-	ScopeQuestions []string   `json:"scope_questions"`
-	Relations      []Relation `json:"relations"`
+	Problem        string          `json:"problem"`
+	Solution       string          `json:"solution"`
+	Blockers       []string        `json:"blockers"`
+	ScopeQuestions []ScopeQuestion `json:"scope_questions"`
+	Relations      []Relation      `json:"relations"`
 }
 
 // TriageResult is a finished triage with the run behind it.
@@ -51,7 +51,7 @@ func TriagePrompt(ticket jira.Ticket, others []jira.Ticket) string {
 }
 
 // Prompt hands the triage to the questions step.
-func (t Triage) Prompt() string {
+func (t Triage) Prompt(scope map[string]string) string {
 	var out strings.Builder
 	out.WriteString("\nThe ticket's triage, from Jira alone:\n")
 	fmt.Fprintf(&out, "Problem: %s\nSolution: %s\n", t.Problem, t.Solution)
@@ -65,12 +65,19 @@ func (t Triage) Prompt() string {
 		}
 	}
 	list("Blockers already known", t.Blockers)
-	list("Scope questions", t.ScopeQuestions)
+	var open []string
+	for _, q := range t.ScopeQuestions {
+		if strings.TrimSpace(scope[q.Question]) == "" {
+			open = append(open, q.String())
+		}
+	}
+	list("Scope questions", open)
 	var related []string
 	for _, r := range t.Relations {
 		related = append(related, fmt.Sprintf("%s %s: %s", r.Label(), r.Key, r.Why))
 	}
 	list("Related tickets", related)
+	out.WriteString(ScopePrompt(scope))
 	return out.String()
 }
 

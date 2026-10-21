@@ -132,7 +132,27 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
-	_, err := s.db.Exec("PRAGMA user_version = 6")
+	if version < 7 {
+		if _, err := s.db.Exec(`ALTER TABLE drafts ADD COLUMN scope TEXT NOT NULL DEFAULT '{}'`); err != nil {
+			return err
+		}
+	}
+	if version < 8 {
+		if _, err := s.db.Exec(`
+			CREATE TABLE events (
+				id      INTEGER PRIMARY KEY,
+				at      TEXT NOT NULL,
+				ui      TEXT NOT NULL,
+				session TEXT NOT NULL,
+				name    TEXT NOT NULL,
+				key     TEXT NOT NULL,
+				props   TEXT NOT NULL
+			);
+			CREATE INDEX events_at ON events (at);`); err != nil {
+			return err
+		}
+	}
+	_, err := s.db.Exec("PRAGMA user_version = 8")
 	return err
 }
 
@@ -159,11 +179,15 @@ func (s *Store) Add(saved draft.Saved, summary string) (draft.Saved, error) {
 	if err != nil {
 		return draft.Saved{}, err
 	}
+	scope, err := json.Marshal(saved.Scope)
+	if err != nil {
+		return draft.Saved{}, err
+	}
 	result, err := s.db.Exec(
-		`INSERT INTO drafts (key, summary, approach, ref, step, session_id, cost_usd, session_cost_usd, turns, usage, created, draft, markdown, answers)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO drafts (key, summary, approach, ref, step, session_id, cost_usd, session_cost_usd, turns, usage, created, draft, markdown, answers, scope)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		saved.Key, summary, saved.Approach, saved.Ref, saved.Step, saved.SessionID, saved.CostUSD, saved.SessionCostUSD, saved.Turns, string(usage),
-		saved.Created.UTC().Format(time.RFC3339Nano), string(data), saved.Markdown, string(answers),
+		saved.Created.UTC().Format(time.RFC3339Nano), string(data), saved.Markdown, string(answers), string(scope),
 	)
 	if err != nil {
 		return draft.Saved{}, err
@@ -240,7 +264,7 @@ func (s *Store) History(key string) ([]draft.Saved, error) {
 }
 
 func (s *Store) query(where string, args ...any) ([]draft.Saved, error) {
-	rows, err := s.db.Query(`SELECT id, key, approach, ref, step, session_id, cost_usd, session_cost_usd, turns, usage, created, draft, markdown, answers, children FROM drafts `+where, args...)
+	rows, err := s.db.Query(`SELECT id, key, approach, ref, step, session_id, cost_usd, session_cost_usd, turns, usage, created, draft, markdown, answers, children, scope FROM drafts `+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -249,8 +273,8 @@ func (s *Store) query(where string, args ...any) ([]draft.Saved, error) {
 	var drafts []draft.Saved
 	for rows.Next() {
 		var saved draft.Saved
-		var created, data, answers, usage, children string
-		if err := rows.Scan(&saved.ID, &saved.Key, &saved.Approach, &saved.Ref, &saved.Step, &saved.SessionID, &saved.CostUSD, &saved.SessionCostUSD, &saved.Turns, &usage, &created, &data, &saved.Markdown, &answers, &children); err != nil {
+		var created, data, answers, usage, children, scope string
+		if err := rows.Scan(&saved.ID, &saved.Key, &saved.Approach, &saved.Ref, &saved.Step, &saved.SessionID, &saved.CostUSD, &saved.SessionCostUSD, &saved.Turns, &usage, &created, &data, &saved.Markdown, &answers, &children, &scope); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(usage), &saved.Usage); err != nil {
@@ -260,6 +284,9 @@ func (s *Store) query(where string, args ...any) ([]draft.Saved, error) {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(children), &saved.Children); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(scope), &saved.Scope); err != nil {
 			return nil, err
 		}
 		if saved.Created, err = time.Parse(time.RFC3339Nano, created); err != nil {
@@ -367,4 +394,53 @@ func (s *Store) LatestTriage(key string) (draft.SavedTriage, bool, error) {
 	}
 	saved.Created, err = time.Parse(time.RFC3339Nano, created)
 	return saved, err == nil, err
+}
+
+// Event is one thing that happened in refine, recorded when tracking is on.
+type Event struct {
+	At      time.Time
+	UI      string
+	Session string
+	Name    string
+	Key     string
+	Props   map[string]any
+}
+
+// AddEvent records an event.
+func (s *Store) AddEvent(e Event) error {
+	props, err := json.Marshal(e.Props)
+	if err != nil {
+		return err
+	}
+	if e.Props == nil {
+		props = []byte("{}")
+	}
+	_, err = s.db.Exec(`INSERT INTO events (at, ui, session, name, key, props) VALUES (?, ?, ?, ?, ?, ?)`,
+		e.At.UTC().Format(time.RFC3339Nano), e.UI, e.Session, e.Name, e.Key, string(props))
+	return err
+}
+
+// Events returns the events recorded since a time, oldest first.
+func (s *Store) Events(since time.Time) ([]Event, error) {
+	rows, err := s.db.Query(`SELECT at, ui, session, name, key, props FROM events WHERE at >= ? ORDER BY id`, since.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []Event
+	for rows.Next() {
+		var e Event
+		var at, props string
+		if err := rows.Scan(&at, &e.UI, &e.Session, &e.Name, &e.Key, &props); err != nil {
+			return nil, err
+		}
+		if e.At, err = time.Parse(time.RFC3339Nano, at); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(props), &e.Props); err != nil {
+			return nil, err
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
 }
