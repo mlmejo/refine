@@ -6,7 +6,8 @@
     "technical_implementation",
     "story_point_criteria",
     "points",
-    "split"
+    "split",
+    "elsewhere"
   ],
   "properties": {
     "acceptance_criteria": {
@@ -234,6 +235,28 @@
         }
       },
       "description": "Behaviour slices of the ticket. Empty when no split is needed."
+    },
+    "elsewhere": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "behaviour"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The other ticket's key, from the list of other open tickets."
+          },
+          "behaviour": {
+            "type": "string",
+            "description": "The behaviour left to it, in a few plain words."
+          }
+        }
+      },
+      "description": "Behaviours left out of this ticket and its split because another open ticket already delivers them. Empty when none are."
     }
   }
 }

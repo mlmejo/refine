@@ -48,7 +48,14 @@ func run() error {
 
 	client := jira.New(cfg.Jira.Site, cfg.Jira.Email, cfg.Jira.Token)
 	jql := jira.AssignedJQL(cfg.Jira.Sprint)
-	mineJQL := jira.MineJQL(cfg.Jira.Sprint, cfg.Jira.ReadySprint)
+	// others reads the open tickets a refinement must not repeat.
+	others := func(ctx context.Context, ticket jira.Ticket) ([]jira.Ticket, error) {
+		found, err := client.Tickets(ctx, jira.OthersJQL(ticket.Parent, cfg.Jira.Sprint, cfg.Jira.ReadySprint))
+		if err != nil {
+			return nil, fmt.Errorf("read the other open tickets: %w", err)
+		}
+		return found, nil
+	}
 
 	state, err := config.StateDir()
 	if err != nil {
@@ -67,6 +74,31 @@ func run() error {
 		Project:    cfg.Jira.Project,
 		Hidden:     hiddenKeys,
 		SaveHidden: hiddenStore.Save,
+		// The runner and the origin check read cfg.Repos when called, so a
+		// change here applies to the next brief or draft. Each change swaps in
+		// a new map rather than writing to one a run may be reading.
+		Repos: func() map[string]string { return cfg.Repos },
+		AddRepo: func(name, dir string) error {
+			if err := config.AddRepo(path, name, dir); err != nil {
+				return err
+			}
+			repos := maps.Clone(cfg.Repos)
+			if repos == nil {
+				repos = map[string]string{}
+			}
+			repos[name] = dir
+			cfg.Repos = repos
+			return nil
+		},
+		RemoveRepo: func(name string) error {
+			if err := config.RemoveRepo(path, name); err != nil {
+				return err
+			}
+			repos := maps.Clone(cfg.Repos)
+			delete(repos, name)
+			cfg.Repos = repos
+			return nil
+		},
 		List: func(ctx context.Context) (home.Page, error) {
 			user, err := client.Myself(ctx)
 			if err != nil {
@@ -81,7 +113,7 @@ func run() error {
 		},
 	}
 
-	drafts, err := store.Open(filepath.Join(state, "refine.db"), filepath.Join(filepath.Dir(path), "exports"), filepath.Join(state, "drafts"))
+	drafts, err := store.Open(filepath.Join(state, "refine.db"), filepath.Join(filepath.Dir(path), "exports"))
 	if err != nil {
 		return err
 	}
@@ -120,11 +152,11 @@ func run() error {
 		if err != nil {
 			return draft.SavedTriage{}, err
 		}
-		mine, err := client.Tickets(ctx, mineJQL)
+		open, err := others(ctx, ticket)
 		if err != nil {
-			return draft.SavedTriage{}, fmt.Errorf("read your other tickets: %w", err)
+			return draft.SavedTriage{}, err
 		}
-		result, err := draft.Runner{Dir: state}.Triage(ctx, draft.TriagePrompt(ticket, mine))
+		result, err := draft.Runner{Dir: state}.Triage(ctx, draft.TriagePrompt(ticket, open))
 		if err != nil {
 			return draft.SavedTriage{}, err
 		}
@@ -235,7 +267,15 @@ func run() error {
 			if err != nil {
 				return draft.Saved{}, err
 			}
-			stamp, result, err := run.Stamp(ctx, questions.SessionID, draft.StampPrompt(questions))
+			ticket, err := client.GetTicket(ctx, issue.Key)
+			if err != nil {
+				return draft.Saved{}, err
+			}
+			open, err := others(ctx, ticket)
+			if err != nil {
+				return draft.Saved{}, err
+			}
+			stamp, result, err := run.Stamp(ctx, questions.SessionID, draft.StampPrompt(questions, open))
 			if err != nil {
 				return draft.Saved{}, err
 			}
@@ -253,6 +293,14 @@ func run() error {
 			stamped.Turns, stamped.Usage = result.Turns, result.Usage
 			stamped.Created = time.Now()
 			stamped.Draft = questions.Draft.WithStamp(stamp)
+			// A check that fails leaves the stamp unchecked, which the write
+			// confirmation warns about, rather than losing the stamp.
+			if check, checked, err := (draft.Runner{Dir: state}).Check(ctx, draft.CheckPrompt(stamped, open)); err == nil {
+				stamped.Draft = stamped.Draft.WithCheck(check)
+				stamped.CostUSD += checked.CostUSD
+			} else if ctx.Err() != nil {
+				return draft.Saved{}, ctx.Err()
+			}
 			return drafts.Add(stamped, issue.Summary)
 		},
 		SaveAnswers: drafts.SaveAnswers,

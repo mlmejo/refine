@@ -397,7 +397,7 @@ func (m Model) viewDrafting() string {
 	if m.stamping {
 		body = m.ticketHeader() + "\n\n" +
 			m.spin.View() + " Claude is stamping the ticket from your answers… " + elapsed.String() + "\n" +
-			quietStyle.Render("Writes Acceptance Criteria, Technical Implementation, points and the split. Forks the questions session.") + "\n"
+			quietStyle.Render("Writes Acceptance Criteria, Technical Implementation, points and the split, then checks them against the other open tickets. Forks the questions session.") + "\n"
 	}
 	return m.withFooter(body+m.syncLines(), "esc cancel")
 }

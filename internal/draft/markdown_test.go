@@ -130,6 +130,23 @@ func TestMarkdownListsRelations(t *testing.T) {
 	}
 }
 
+func TestMarkdownListsWhatOtherTicketsDeliver(t *testing.T) {
+	saved := Saved{Key: "GEEK-12069", Draft: Draft{
+		Elsewhere:  []Elsewhere{{Key: "GEEK-11998", Behaviour: "the notification list"}},
+		Checked:    true,
+		Duplicates: []Duplicate{{Ticket: "GEEK-12069", Criterion: "The badge clears.", Key: "GEEK-11998", Covered: "The badge clears once the bell has been opened."}},
+	}}
+	got := Markdown(saved, "")
+	for _, want := range []string{
+		"## Left to other tickets\n\n- GEEK-11998: the notification list",
+		"## Already delivered by other tickets\n\n- GEEK-12069: \"The badge clears.\" is delivered by GEEK-11998: \"The badge clears once the bell has been opened.\"",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
 func TestMarkdownFollowsTheSteps(t *testing.T) {
 	questions := Saved{
 		Key:     "GEEK-8",

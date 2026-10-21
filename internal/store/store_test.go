@@ -12,7 +12,7 @@ import (
 
 func open(t *testing.T, dir string) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(dir, "refine.db"), filepath.Join(dir, "exports"), filepath.Join(dir, "drafts"))
+	s, err := Open(filepath.Join(dir, "refine.db"), filepath.Join(dir, "exports"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,32 +52,6 @@ func TestAddKeepsEveryVersionWithItsMarkdown(t *testing.T) {
 
 	if _, ok, err := s.Latest("GEEK-2"); ok || err != nil {
 		t.Errorf("unknown ticket ok %v err %v", ok, err)
-	}
-}
-
-func TestOpenImportsJSONDraftsOnce(t *testing.T) {
-	dir := t.TempDir()
-	legacy := draft.Store{Dir: filepath.Join(dir, "drafts")}
-	if err := legacy.Save(draft.Saved{Key: "GEEK-9", Approach: "old", Created: time.Now()}); err != nil {
-		t.Fatal(err)
-	}
-
-	s := open(t, dir)
-	saved, ok, err := s.Latest("GEEK-9")
-	if err != nil || !ok || saved.Approach != "old" {
-		t.Fatalf("imported = %+v ok %v err %v", saved, ok, err)
-	}
-	if _, err := os.Stat(saved.Markdown); err != nil {
-		t.Errorf("imported draft has no markdown: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "drafts", "GEEK-9.json")); err != nil {
-		t.Errorf("JSON file removed: %v", err)
-	}
-	s.Close()
-
-	s = open(t, dir)
-	if history, _ := s.History("GEEK-9"); len(history) != 1 {
-		t.Errorf("reopening imported again: %d drafts", len(history))
 	}
 }
 

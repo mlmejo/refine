@@ -46,6 +46,12 @@ type Source struct {
 	// Hidden are keys removed from the list earlier; SaveHidden keeps the new set.
 	Hidden     []string
 	SaveHidden func([]string) error
+
+	// Repos lists the repos Claude reads, by name; AddRepo and RemoveRepo
+	// change them in the config file.
+	Repos      func() map[string]string
+	AddRepo    func(name, dir string) error
+	RemoveRepo func(name string) error
 }
 
 // removal is a ticket taken off the list, kept so u can put it back.
@@ -70,6 +76,8 @@ const (
 	stale
 	triaging
 	triaged
+	repos
+	browse
 )
 
 type loadedMsg struct {
@@ -169,6 +177,20 @@ type Model struct {
 	hidden  map[string]bool
 	removed []removal
 	notice  error
+
+	// The repos screen: its cursor, the repo asked about removing, and what
+	// the last change did. The browser: the directory shown, its folders, the
+	// cursor and scroll, and the name a picked repo is about to get.
+	repoCursor int
+	repoAsk    string
+	repoErr    error
+	repoDone   string
+	dir        string
+	folders    []folder
+	dirCursor  int
+	dirTop     int
+	naming     bool
+	nameIn     textinput.Model
 }
 
 // New returns a home screen titled with the listed sprint.
@@ -198,6 +220,7 @@ func New(title string, source Source, refiner Refiner) Model {
 		input:    newInput(),
 		side:     -1,
 		answerIn: newAnswerInput(),
+		nameIn:   newNameInput(),
 		spin:     spinner.New(spinner.WithSpinner(spinner.Dot)),
 	}
 }
@@ -350,6 +373,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateRefine(msg)
 		case checking, stale:
 			return m.updateSync(msg)
+		case repos:
+			return m.updateRepos(msg)
+		case browse:
+			return m.updateBrowse(msg)
 		}
 		return m.updateList(msg)
 	}
@@ -367,6 +394,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "m":
 		return m.askMove(), nil
+	case "R":
+		return m.openRepos(), nil
 	case "x", "delete":
 		return m.remove(), nil
 	case "u":
@@ -483,6 +512,10 @@ func (m Model) View() string {
 		return m.viewChecking()
 	case stale:
 		return m.viewStale()
+	case repos:
+		return m.viewRepos()
+	case browse:
+		return m.viewBrowse()
 	}
 	return m.viewList()
 }
@@ -534,6 +567,9 @@ func (m Model) listFooter() string {
 		ready := ""
 		if m.refiner.Move != nil {
 			ready = " · m ready for sprint"
+		}
+		if m.source.Repos != nil {
+			ready += " · R repos"
 		}
 		help := "↑/↓ move · enter open · o open by key" + ready + " · x remove · r refresh · q quit"
 		if len(m.removed) > 0 {

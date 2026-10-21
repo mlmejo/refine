@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 	"unicode/utf8"
 
 	"github.com/mlmejo/refine/internal/jira"
@@ -26,7 +25,7 @@ func TestPromptDescribesTicketReposAndApproach(t *testing.T) {
 	}
 	repos := map[string]string{"dating": "/r/dating", "dating-backend": "/r/dating-backend"}
 
-	got := Prompt(ticket, repos, nil, "", "  Install the SDK with composer.  ")
+	got := DraftPrompt(Context(ticket, repos, nil, ""), "  Install the SDK with composer.  ")
 	for _, want := range []string{
 		"Ticket GEEK-7: SDK",
 		"Status: To Do. Story points: 5.",
@@ -42,28 +41,28 @@ func TestPromptDescribesTicketReposAndApproach(t *testing.T) {
 		}
 	}
 
-	if got := Prompt(ticket, nil, nil, "", " "); !strings.Contains(got, "does not know yet") {
+	if got := DraftPrompt(Context(ticket, nil, nil, ""), " "); !strings.Contains(got, "does not know yet") {
 		t.Errorf("empty approach prompt:\n%s", got)
 	}
 }
 
 func TestPromptIncludesOutlines(t *testing.T) {
 	outlines := map[string]outline.Outline{"dating": {Commit: "0123456789abcdef", Text: "plugins/ 18\n"}}
-	got := Prompt(jira.Ticket{}, map[string]string{"dating": "/r/dating"}, outlines, "", "")
+	got := Context(jira.Ticket{}, map[string]string{"dating": "/r/dating"}, outlines, "")
 	if !strings.Contains(got, "Use them instead of listing directories:\n\ndating at 0123456789ab:\nplugins/ 18\n") {
 		t.Errorf("prompt:\n%s", got)
 	}
 }
 
 func TestPromptNamesTheRef(t *testing.T) {
-	got := Prompt(jira.Ticket{}, map[string]string{"dating": "/w/dating"}, nil, "develop", "")
+	got := Context(jira.Ticket{}, map[string]string{"dating": "/w/dating"}, nil, "develop")
 	if !strings.Contains(got, "checked out at their develop branch:\n- dating: /w/dating") {
 		t.Errorf("prompt:\n%s", got)
 	}
 }
 
 func TestArgsAreReadOnlyAndAddEveryRepo(t *testing.T) {
-	args := strings.Join(Runner{Repos: map[string]string{"b": "/r/b", "a": "/r/a"}}.Args("hi"), " ")
+	args := strings.Join(Runner{Repos: map[string]string{"b": "/r/b", "a": "/r/a"}}.args("hi", ""), " ")
 	for _, want := range []string{"-p hi", "--allowedTools Read Grep Glob", "--strict-mcp-config", "--output-format json", "--add-dir /r/a --add-dir /r/b"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("args missing %q: %s", want, args)
@@ -130,36 +129,21 @@ func TestRunReportsClaudeErrors(t *testing.T) {
 	}
 }
 
-func TestStoreRoundTrip(t *testing.T) {
-	store := Store{Dir: filepath.Join(t.TempDir(), "drafts")}
-	if _, ok, err := store.Load("GEEK-7"); ok || err != nil {
-		t.Fatalf("empty load ok = %v err = %v", ok, err)
-	}
-
-	saved := Saved{Key: "GEEK-7", Approach: "use the SDK", SessionID: "s-1", Created: time.Now().UTC().Truncate(time.Second),
-		Draft: Draft{AcceptanceCriteria: []string{"QA sees it."}, Points: 2}}
-	if err := store.Save(saved); err != nil {
-		t.Fatal(err)
-	}
-	got, ok, err := store.Load("GEEK-7")
-	if err != nil || !ok {
-		t.Fatalf("load ok = %v err = %v", ok, err)
-	}
-	a, _ := json.Marshal(got)
-	b, _ := json.Marshal(saved)
-	if string(a) != string(b) {
-		t.Errorf("got %s\nwant %s", a, b)
-	}
-}
-
 func TestStepSchemasAndRulesAreEmbedded(t *testing.T) {
 	for name, step := range map[string]struct{ schema, rules, heading string }{
 		"triage":    {triageSchema, triageRules, "## Scope questions"},
 		"questions": {questionsSchema, questionRules, "## Questions"},
-		"stamp":     {stampSchema, stampRules, "## Acceptance Criteria"},
+		"stamp":     {stampSchema, stampRules, "## Other tickets"},
+		"check":     {checkSchema, checkRules, "## Duplicates"},
 	} {
 		if !json.Valid([]byte(step.schema)) || !strings.Contains(step.rules, step.heading) {
 			t.Errorf("%s: embedded schema or rules broken", name)
+		}
+	}
+	// The steps that read code share how to read it efficiently.
+	for name, rules := range map[string]string{"brief": briefRules, "questions": questionRules} {
+		if strings.Count(rules, "## Working efficiently") != 1 || strings.Contains(rules, "{{") {
+			t.Errorf("%s: shared section missing or marker left:\n%s", name, rules)
 		}
 	}
 	// Each step asks for its own fields only.
@@ -214,15 +198,83 @@ func TestStampPromptCarriesAnswersAndOpenQuestions(t *testing.T) {
 		Draft:   Draft{Deployment: Deployment{Blockers: []string{"Who sets the env?"}}, OpenQuestions: []string{"Server count or client count?", "Reset on open?"}},
 		Answers: map[string]string{"Server count or client count?": "server"},
 	}
-	got := StampPrompt(saved)
+	got := StampPrompt(saved, nil)
 	if !strings.Contains(got, "- Q: Server count or client count?\n  A: \"server\"") {
 		t.Errorf("answers missing:\n%s", got)
 	}
 	if !strings.Contains(got, "proceed with these still open") || !strings.Contains(got, "- Who sets the env?\n- Reset on open?\n") {
 		t.Errorf("open questions missing:\n%s", got)
 	}
-	if got := StampPrompt(Saved{Draft: Draft{OpenQuestions: []string{"a"}}, Answers: map[string]string{"a": "yes"}}); strings.Contains(got, "still open") {
+	if got := StampPrompt(Saved{Draft: Draft{OpenQuestions: []string{"a"}}, Answers: map[string]string{"a": "yes"}}, nil); strings.Contains(got, "still open") {
 		t.Errorf("all answered, yet:\n%s", got)
+	}
+	if strings.Contains(got, "Other open tickets") {
+		t.Errorf("lists other tickets when there are none:\n%s", got)
+	}
+}
+
+func TestStampPromptListsOtherTicketsButNotItsOwn(t *testing.T) {
+	saved := Saved{Key: "GEEK-1", Children: map[int]string{0: "GEEK-3"}}
+	others := []jira.Ticket{
+		{Issue: jira.Issue{Key: "GEEK-1", Summary: "This one"}},
+		{Issue: jira.Issue{Key: "GEEK-2", Summary: "Notification centre", Status: "IN QA", AcceptanceCriteria: "* The bell badge shows how many notifications are unread."}},
+		{Issue: jira.Issue{Key: "GEEK-3", Summary: "Split from this one"}},
+	}
+	got := StampPrompt(saved, others)
+	if !strings.Contains(got, "Do not give this ticket or a split child a behaviour one of them already delivers") || !strings.Contains(got, "GEEK-2 (IN QA): Notification centre") || !strings.Contains(got, "bell badge shows how many") {
+		t.Errorf("other tickets missing:\n%s", got)
+	}
+	if strings.Contains(got, "This one") || strings.Contains(got, "Split from this one") {
+		t.Errorf("lists the ticket or its own split tickets:\n%s", got)
+	}
+}
+
+func TestCheckPromptListsEveryCriterionAndTheOtherTickets(t *testing.T) {
+	saved := Saved{Key: "GEEK-1", Draft: Draft{
+		AcceptanceCriteria: []string{"Clicking the bell opens the list."},
+		Split:              []Child{{Title: "Notifications - Badge", AcceptanceCriteria: []string{"As a user, I want the badge to clear when I open the bell, so that it shows only new ones."}}},
+	}}
+	others := []jira.Ticket{{Issue: jira.Issue{Key: "GEEK-2", Summary: "Badge", Status: "To Do", AcceptanceCriteria: "* The badge clears once the bell has been opened."}}}
+	got := CheckPrompt(saved, others)
+	for _, want := range []string{
+		"Ticket GEEK-1",
+		"Acceptance Criteria:\n* Clicking the bell opens the list.",
+		`Split ticket "Notifications - Badge", Acceptance Criteria:`,
+		"GEEK-2 (To Do): Badge",
+		"The badge clears once the bell has been opened.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if got := CheckPrompt(saved, nil); !strings.Contains(got, "Other open tickets: none.") {
+		t.Errorf("no other tickets:\n%s", got)
+	}
+}
+
+func TestCheckRunsWithoutReposOrToolsAndMarksTheDraft(t *testing.T) {
+	dir := t.TempDir()
+	bin, argsFile := filepath.Join(dir, "claude"), filepath.Join(dir, "args")
+	script := "#!/bin/sh\nfor a in \"$@\"; do printf '[%s]' \"$a\"; done > '" + argsFile + "'\n" +
+		`echo '{"type":"result","subtype":"success","session_id":"c-1","total_cost_usd":0.03,"structured_output":{"duplicates":[{"ticket":"GEEK-1","criterion":"The badge clears.","key":"GEEK-2","covered":"The badge clears once the bell has been opened."}]}}'` + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	check, run, err := Runner{Bin: bin, Dir: dir, Repos: map[string]string{"a": "/r/a"}}.Check(context.Background(), "check")
+	if err != nil || run.CostUSD != 0.03 || len(check.Duplicates) != 1 || check.Duplicates[0].Key != "GEEK-2" {
+		t.Fatalf("check = %+v run %+v err %v", check, run, err)
+	}
+	args, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(args), "[--tools][]") || strings.Contains(string(args), "--add-dir") || !strings.Contains(string(args), "## Duplicates") {
+		t.Errorf("args: %s", args)
+	}
+
+	d := Draft{}.WithCheck(check)
+	if !d.Checked || len(d.Duplicates) != 1 {
+		t.Errorf("checked draft = %+v", d)
+	}
+	if d = d.WithStamp(Stamp{Elsewhere: []Elsewhere{{Key: "GEEK-2", Behaviour: "badge count"}}}); d.Checked || d.Duplicates != nil || d.Elsewhere[0].Key != "GEEK-2" {
+		t.Errorf("a new stamp keeps the old check: %+v", d)
 	}
 }
 

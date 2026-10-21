@@ -36,11 +36,6 @@ type Usage struct {
 	Output     int `json:"output_tokens"`
 }
 
-// Args is the claude command line for a new draft.
-func (r Runner) Args(prompt string) []string {
-	return r.args(prompt, "")
-}
-
 func (r Runner) args(prompt, session string) []string {
 	return r.command(prompt, session, questionRules, questionsSchema)
 }

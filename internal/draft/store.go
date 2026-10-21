@@ -1,12 +1,8 @@
 package draft
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
 	"maps"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -63,47 +59,6 @@ func (s Saved) Unanswered() int {
 		}
 	}
 	return count
-}
-
-// Store keeps one draft per ticket as Dir/<KEY>.json.
-type Store struct {
-	Dir string
-}
-
-// Save writes the draft, replacing any earlier one for the ticket.
-func (s Store) Save(saved Saved) error {
-	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(saved, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := s.path(saved.Key) + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.path(saved.Key))
-}
-
-// Load returns the ticket's saved draft, if there is one.
-func (s Store) Load(key string) (Saved, bool, error) {
-	data, err := os.ReadFile(s.path(key))
-	if errors.Is(err, os.ErrNotExist) {
-		return Saved{}, false, nil
-	}
-	if err != nil {
-		return Saved{}, false, err
-	}
-	var saved Saved
-	if err := json.Unmarshal(data, &saved); err != nil {
-		return Saved{}, false, err
-	}
-	return saved, true, nil
-}
-
-func (s Store) path(key string) string {
-	return filepath.Join(s.Dir, filepath.Base(key)+".json")
 }
 
 // CreateSplit creates each split ticket that saved.Children lacks, in order,

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -151,4 +153,108 @@ func expandHome(path string) string {
 		return path
 	}
 	return filepath.Join(home, strings.TrimPrefix(path, "~"))
+}
+
+// AddRepo adds name = dir to the [repos] table of the config at path, leaving
+// the rest of the file as written. A dir under the home directory is written
+// with ~.
+func AddRepo(path, name, dir string) error {
+	return editRepos(path, func(lines []string, start, end int) ([]string, error) {
+		if repoLine(lines[start:end], name) >= 0 {
+			return nil, fmt.Errorf("a repo named %s is already listed", name)
+		}
+		at := end
+		for at > start && strings.TrimSpace(lines[at-1]) == "" {
+			at--
+		}
+		entry := tomlKey(name) + " = " + strconv.Quote(collapseHome(dir))
+		return slices.Insert(lines, at, entry), nil
+	})
+}
+
+// RemoveRepo deletes name from the [repos] table of the config at path.
+func RemoveRepo(path, name string) error {
+	return editRepos(path, func(lines []string, start, end int) ([]string, error) {
+		i := repoLine(lines[start:end], name)
+		if i < 0 {
+			return nil, fmt.Errorf("no repo named %s in %s", name, path)
+		}
+		return slices.Delete(lines, start+i, start+i+1), nil
+	})
+}
+
+// editRepos hands edit the file's lines and the bounds of its [repos] table,
+// adding the table when there is none, and writes the result back once it
+// still parses.
+func editRepos(path string, edit func(lines []string, start, end int) ([]string, error)) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	start := slices.IndexFunc(lines, func(line string) bool { return strings.TrimSpace(line) == "[repos]" }) + 1
+	if start == 0 {
+		lines = append(lines, "", "[repos]")
+		start = len(lines)
+	}
+	end := len(lines)
+	for i := start; i < len(lines); i++ {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "[") {
+			end = i
+			break
+		}
+	}
+
+	lines, err = edit(lines, start, end)
+	if err != nil {
+		return err
+	}
+	out := strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
+	if _, err := toml.Decode(out, &Config{}); err != nil {
+		return fmt.Errorf("edit %s: %w", path, err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(out), info.Mode().Perm()); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// repoLine returns the index of the line that sets name, or -1.
+func repoLine(lines []string, name string) int {
+	return slices.IndexFunc(lines, func(line string) bool {
+		var entry map[string]any
+		if _, err := toml.Decode(line, &entry); err != nil || len(entry) != 1 {
+			return false
+		}
+		_, ok := entry[name]
+		return ok
+	})
+}
+
+// tomlKey writes name bare when TOML allows it, else quoted.
+func tomlKey(name string) string {
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return strconv.Quote(name)
+		}
+	}
+	return name
+}
+
+// collapseHome is the reverse of expandHome.
+func collapseHome(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	if rel, err := filepath.Rel(home, path); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+		return "~/" + rel
+	}
+	return path
 }

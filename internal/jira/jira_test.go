@@ -126,6 +126,7 @@ func TestGetTicketReadsDescriptionPointsCommentsAndLinks(t *testing.T) {
 				{"type":"rule"},
 				{"type":"paragraph","content":[{"type":"text","text":"APIs cannot talk to StarVault"}]}
 			]},
+			"parent":{"key":"GEEK-1"},
 			"customfield_10026":5,
 			"customfield_10284":"Total: High",
 			"comment":{"comments":[{"author":{"displayName":"PO"},"body":{"type":"doc","content":[
@@ -145,6 +146,9 @@ func TestGetTicketReadsDescriptionPointsCommentsAndLinks(t *testing.T) {
 	}
 	if ticket.Description != "Problems\n\nAPIs cannot talk to StarVault" {
 		t.Errorf("description = %q", ticket.Description)
+	}
+	if ticket.Parent != "GEEK-1" {
+		t.Errorf("parent = %q", ticket.Parent)
 	}
 	if ticket.Points == nil || *ticket.Points != 5 || ticket.StoryPointCriteria != "Total: High" {
 		t.Errorf("points = %v criteria = %q", ticket.Points, ticket.StoryPointCriteria)
@@ -408,11 +412,14 @@ func TestCreateChildReturnsTheKeyWhenPointsFail(t *testing.T) {
 	}
 }
 
-func TestMineJQLCoversEverySprint(t *testing.T) {
-	got := MineJQL("Refinement Ready - Team John", "Ready for Sprint - Team John")
-	want := `assignee = currentUser() AND sprint in ("Refinement Ready - Team John", "Ready for Sprint - Team John") AND statusCategory != Done ORDER BY key ASC`
+func TestOthersJQLCoversYourSprintsAndTheEpic(t *testing.T) {
+	got := OthersJQL("GEEK-900", "Refinement Ready - Team John", "Ready for Sprint - Team John")
+	want := `statusCategory != Done AND ((assignee = currentUser() AND (sprint in ("Refinement Ready - Team John", "Ready for Sprint - Team John") OR sprint in openSprints())) OR parent = "GEEK-900") ORDER BY key ASC`
 	if got != want {
 		t.Errorf("jql = %q", got)
+	}
+	if got := OthersJQL("", "A"); strings.Contains(got, "parent") {
+		t.Errorf("jql without a parent = %q", got)
 	}
 }
 

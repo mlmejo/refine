@@ -92,3 +92,62 @@ func TestLoadReadsEnvFileInWorkingDir(t *testing.T) {
 		t.Errorf("token = %q err = %v", cfg.Jira.Token, err)
 	}
 }
+
+func TestAddAndRemoveRepoKeepTheRestOfTheFile(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	path := write(t, `# my config
+[jira]
+site = "s"
+
+[repos]
+dating = "~/creativex/dating" # front end
+"starvault.tech" = "/abs/starvault.tech"
+
+[extra]
+x = 1
+`)
+
+	if err := AddRepo(path, "wannahookup", filepath.Join(home, "creativex/wannahookup")); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddRepo(path, "go.naughty", "/abs/gonaughty"); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddRepo(path, "dating", "/elsewhere"); err == nil {
+		t.Error("adding a name twice succeeded")
+	}
+	if err := RemoveRepo(path, "starvault.tech"); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveRepo(path, "nope"); err == nil {
+		t.Error("removing an unknown name succeeded")
+	}
+
+	data, _ := os.ReadFile(path)
+	want := `# my config
+[jira]
+site = "s"
+
+[repos]
+dating = "~/creativex/dating" # front end
+wannahookup = "~/creativex/wannahookup"
+"go.naughty" = "/abs/gonaughty"
+
+[extra]
+x = 1
+`
+	if string(data) != want {
+		t.Errorf("file =\n%s", data)
+	}
+}
+
+func TestAddRepoAddsTheTable(t *testing.T) {
+	path := write(t, "[jira]\nsite = \"s\"\n")
+	if err := AddRepo(path, "dating", "/abs/dating"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if want := "[jira]\nsite = \"s\"\n\n[repos]\ndating = \"/abs/dating\"\n"; string(data) != want {
+		t.Errorf("file =\n%s", data)
+	}
+}

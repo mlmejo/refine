@@ -6,10 +6,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -39,9 +37,8 @@ type Store struct {
 	Exports string
 }
 
-// Open opens or creates the database at path. A new database first imports
-// the JSON drafts in legacyDir, leaving the files in place.
-func Open(path, exports, legacyDir string) (*Store, error) {
+// Open opens or creates the database at path.
+func Open(path, exports string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
@@ -50,7 +47,7 @@ func Open(path, exports, legacyDir string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db, Exports: exports}
-	if err := s.migrate(legacyDir); err != nil {
+	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -62,7 +59,7 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func (s *Store) migrate(legacyDir string) error {
+func (s *Store) migrate() error {
 	var version int
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
@@ -135,40 +132,8 @@ func (s *Store) migrate(legacyDir string) error {
 			return err
 		}
 	}
-	if version < 1 {
-		if err := s.importJSON(legacyDir); err != nil {
-			return fmt.Errorf("import %s: %w", legacyDir, err)
-		}
-	}
 	_, err := s.db.Exec("PRAGMA user_version = 6")
 	return err
-}
-
-func (s *Store) importJSON(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	legacy := draft.Store{Dir: dir}
-	for _, entry := range entries {
-		key, ok := strings.CutSuffix(entry.Name(), ".json")
-		if !ok || entry.IsDir() {
-			continue
-		}
-		saved, found, err := legacy.Load(key)
-		if err != nil {
-			return fmt.Errorf("%s: %w", entry.Name(), err)
-		}
-		if found {
-			if _, err := s.Add(saved, ""); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 // Add writes the draft's markdown to Exports/<KEY>/<created>.md and records

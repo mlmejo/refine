@@ -381,3 +381,36 @@ func TestDraftShowsRelatedTickets(t *testing.T) {
 		}
 	}
 }
+
+func TestDraftShowsWhatOtherTicketsDeliver(t *testing.T) {
+	checked := sample
+	checked.Draft.Checked = true
+	checked.Draft.Elsewhere = []draft.Elsewhere{{Key: "GEEK-11998", Behaviour: "the notification list"}}
+	checked.Draft.Duplicates = []draft.Duplicate{{Ticket: "GEEK-1", Criterion: "The badge clears.", Key: "GEEK-11998", Covered: "The badge clears once opened."}}
+	m := onDraft(t, Refiner{
+		Load: func(key string) (draft.Saved, bool, error) { return checked, key == "GEEK-1", nil },
+	}, 120)
+
+	view := m.View()
+	for _, want := range []string{"Already delivered by other tickets · 1", "GEEK-1 · delivered by GEEK-11998", "Left to other tickets · 1", "the notification list"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("missing %q in:\n%s", want, view)
+		}
+	}
+}
+
+func TestWriteWarnsAboutDuplicatesAndUncheckedDrafts(t *testing.T) {
+	for _, tc := range []struct {
+		draft draft.Draft
+		want  string
+	}{
+		{draft.Draft{}, "not checked against other open tickets; "},
+		{draft.Draft{Checked: true, Duplicates: make([]draft.Duplicate, 1)}, "1 criterion is already delivered by another ticket; "},
+		{draft.Draft{Checked: true, Duplicates: make([]draft.Duplicate, 2)}, "2 criteria are already delivered by other tickets; "},
+		{draft.Draft{Checked: true}, ""},
+	} {
+		if got := duplicateWarning(tc.draft); got != tc.want {
+			t.Errorf("warning = %q, want %q", got, tc.want)
+		}
+	}
+}

@@ -1,0 +1,41 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "duplicates"
+  ],
+  "properties": {
+    "duplicates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ticket",
+          "criterion",
+          "key",
+          "covered"
+        ],
+        "properties": {
+          "ticket": {
+            "type": "string",
+            "description": "This ticket's key, or the split ticket's title, as given."
+          },
+          "criterion": {
+            "type": "string",
+            "description": "The duplicated criterion, quoted exactly."
+          },
+          "key": {
+            "type": "string",
+            "description": "The other ticket's key, from the list of other open tickets."
+          },
+          "covered": {
+            "type": "string",
+            "description": "Where the other ticket already delivers it, quoted from its criteria or description."
+          }
+        }
+      },
+      "description": "Criteria another open ticket already delivers. Empty when none do."
+    }
+  }
+}

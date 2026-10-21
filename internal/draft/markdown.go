@@ -173,6 +173,20 @@ func Markdown(saved Saved, summary string) string {
 		}
 	}
 
+	if len(d.Elsewhere) > 0 {
+		out.WriteString("\n## Left to other tickets\n\n")
+		for _, left := range d.Elsewhere {
+			fmt.Fprintf(&out, "- %s: %s\n", left.Key, left.Behaviour)
+		}
+	}
+
+	if len(d.Duplicates) > 0 {
+		out.WriteString("\n## Already delivered by other tickets\n\n")
+		for _, dup := range d.Duplicates {
+			fmt.Fprintf(&out, "- %s: %q is delivered by %s: %q\n", dup.Ticket, dup.Criterion, dup.Key, dup.Covered)
+		}
+	}
+
 	out.WriteString("\n## Related tickets\n\n")
 	if len(d.Relations) == 0 {
 		out.WriteString("_None._\n")

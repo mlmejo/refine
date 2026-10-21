@@ -4,6 +4,7 @@ package draft
 import (
 	_ "embed"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,7 +15,12 @@ import (
 )
 
 //go:embed questions.md
-var questionRules string
+var questionsText string
+
+//go:embed efficiency.md
+var efficiency string
+
+var questionRules = withShared(questionsText)
 
 //go:embed questions.schema.json
 var questionsSchema string
@@ -24,6 +30,12 @@ var stampRules string
 
 //go:embed stamp.schema.json
 var stampSchema string
+
+// withShared puts the sections that steps reading code share in place of
+// their markers.
+func withShared(rules string) string {
+	return strings.Replace(rules, "{{working efficiently}}\n", efficiency, 1)
+}
 
 // Draft is Claude's refinement. The questions step fills the findings,
 // deployment, approach review and open questions (questions.schema.json); the
@@ -41,9 +53,22 @@ type Draft struct {
 	Points                  int                `json:"points"`
 	Deployment              Deployment         `json:"deployment"`
 	Split                   []Child            `json:"split"`
-	Relations               []Relation         `json:"relations"`
-	ApproachReview          ApproachReview     `json:"approach_review"`
-	OpenQuestions           []string           `json:"open_questions"`
+	// Elsewhere is what the stamp left out because another ticket already
+	// delivers it.
+	Elsewhere      []Elsewhere    `json:"elsewhere,omitempty"`
+	Relations      []Relation     `json:"relations"`
+	ApproachReview ApproachReview `json:"approach_review"`
+	OpenQuestions  []string       `json:"open_questions"`
+	// Checked is set once the stamped criteria were checked against the
+	// other open tickets; Duplicates is what that check found.
+	Checked    bool        `json:"checked,omitempty"`
+	Duplicates []Duplicate `json:"duplicates,omitempty"`
+}
+
+// Elsewhere is a behaviour left to another ticket that already delivers it.
+type Elsewhere struct {
+	Key       string `json:"key"`
+	Behaviour string `json:"behaviour"`
 }
 
 // RepoFiles is one repo's files in the Technical Implementation.
@@ -110,16 +135,22 @@ func (r Relation) Label() string {
 	return r.Kind
 }
 
-// OthersPrompt lists the developer's other tickets, so the draft can say how
-// it relates to them. A ticket without Acceptance Criteria shows its description.
+// OthersPrompt lists the other open tickets, so the triage can say how this
+// one stands to them. A ticket without Acceptance Criteria shows its description.
 func OthersPrompt(self string, others []jira.Ticket) string {
+	return othersList("\nOther open tickets: the developer's in refinement, ready for sprint and the current sprint, and the rest of the epic. Say in relations how this ticket stands to them:\n", others, self)
+}
+
+// othersList lists others under intro, leaving out the skipped keys, or
+// returns nothing when no ticket is left.
+func othersList(intro string, others []jira.Ticket, skip ...string) string {
 	var out strings.Builder
 	for _, ticket := range others {
-		if ticket.Key == self {
+		if slices.Contains(skip, ticket.Key) {
 			continue
 		}
 		if out.Len() == 0 {
-			out.WriteString("\nThe developer's other tickets in refinement and ready for sprint. Say in relations how this ticket stands to them:\n")
+			out.WriteString(intro)
 		}
 		fmt.Fprintf(&out, "\n%s (%s): %s\n", ticket.Key, ticket.Status, ticket.Summary)
 		if ticket.AcceptanceCriteria == "" {
@@ -155,12 +186,6 @@ type ApproachReview struct {
 	Unsure       []string `json:"unsure"`
 	Misses       []string `json:"misses"`
 	Alternatives []string `json:"alternatives"`
-}
-
-// Prompt describes the ticket, the repos (checked out at ref, when set) with
-// their outlines, and the developer's approach.
-func Prompt(ticket jira.Ticket, repos map[string]string, outlines map[string]outline.Outline, ref, approach string) string {
-	return DraftPrompt(Context(ticket, repos, outlines, ref), approach)
 }
 
 // DraftPrompt adds the developer's approach to the ticket's context.
@@ -278,21 +303,27 @@ type Stamp struct {
 	StoryPointCriteria      StoryPointCriteria `json:"story_point_criteria"`
 	Points                  int                `json:"points"`
 	Split                   []Child            `json:"split"`
+	Elsewhere               []Elsewhere        `json:"elsewhere"`
 }
 
-// WithStamp is the draft with the stamp's fields filled in.
+// WithStamp is the draft with the stamp's fields filled in. A new stamp has
+// not been checked against the other tickets yet.
 func (d Draft) WithStamp(s Stamp) Draft {
 	d.AcceptanceCriteria = s.AcceptanceCriteria
 	d.TechnicalImplementation = s.TechnicalImplementation
 	d.StoryPointCriteria = s.StoryPointCriteria
 	d.Points = s.Points
 	d.Split = s.Split
+	d.Elsewhere = s.Elsewhere
+	d.Checked, d.Duplicates = false, nil
 	return d
 }
 
-// StampPrompt asks the questions session for the write-up, with every answer
-// and the questions the developer chose to proceed with unanswered.
-func StampPrompt(saved Saved) string {
+// StampPrompt asks the questions session for the write-up, with every answer,
+// the questions the developer chose to proceed with unanswered, and the other
+// open tickets the write-up must not repeat. The split tickets already created
+// from this draft are not among them.
+func StampPrompt(saved Saved, others []jira.Ticket) string {
 	var out strings.Builder
 	out.WriteString("The questions are done. Write up the ticket as your instructions say.\n")
 	out.WriteString(AnswersPrompt(saved))
@@ -308,7 +339,18 @@ func StampPrompt(saved Saved) string {
 			fmt.Fprintf(&out, "- %s\n", question)
 		}
 	}
+	out.WriteString(othersList("\nOther open tickets. Do not give this ticket or a split child a behaviour one of them already delivers:\n", others, ownKeys(saved)...))
 	return out.String()
+}
+
+// ownKeys are the ticket's key and the split tickets created from it, which
+// are not other tickets to compare it with.
+func ownKeys(saved Saved) []string {
+	keys := []string{saved.Key}
+	for _, key := range saved.Children {
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 func short(commit string) string {

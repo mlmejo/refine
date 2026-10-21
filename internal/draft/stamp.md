@@ -6,10 +6,16 @@ You are writing up a refined Jira ticket. In this session you already read the c
 - An open question the developer chose to proceed with is still open. Where a field depends on it, follow your recommendation, and do not present it as settled.
 - Cover only the work the developer's approach covers.
 
+## Other tickets
+- You are given the other open tickets: the developer's in refinement, ready for sprint and the current sprint, and the rest of the epic. Check them before you write a criterion or a split ticket.
+- When another ticket already delivers a behaviour, judged from its Acceptance Criteria or, when it has none, its description, leave that behaviour out of this ticket's criteria and do not create a split ticket for it. List it under elsewhere with the other ticket's key.
+- A behaviour that builds on another ticket's work, such as a badge that updates live using a listener another ticket adds, is not delivered there; keep it here.
+- When the developer's answers put a behaviour in this ticket although another ticket delivers it, keep it; the answer settles it.
+
 ## Acceptance Criteria
 - Each bullet is one plain sentence describing something QA can see in the product. No headline, no label, no numbering, no bold, no Given/When/Then.
 - No class names, endpoints, event names, queues, ticket codes or other implementation words; those belong in Technical Implementation.
-- Keep each bullet short: about 12 words, 15 at most, one behaviour each. Split a bullet that joins two with "and", "even when" or a semicolon. No parenthetical examples.
+- Keep each bullet short: about 12 words, 15 at most, one behaviour each. Break a bullet that joins two with "and", "even when" or a semicolon into two. No parenthetical examples.
 - Do not repeat where things are recorded (for example "in StarVault") in every bullet; it is implied.
 - Keep them general. Do not write conditions QA cannot check from the product alone, such as "recorded once", "counted once" or "only when X actually changed"; dedup and exclusivity rules belong in Technical Implementation.
 - Cover edge cases, and mark expected behaviour that could look like a bug with "This is expected and not a defect." as a second sentence; it does not count toward the word limit.

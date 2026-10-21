@@ -6,7 +6,9 @@ import (
 )
 
 //go:embed brief.md
-var briefRules string
+var briefText string
+
+var briefRules = withShared(briefText)
 
 //go:embed brief.schema.json
 var briefSchema string

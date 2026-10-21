@@ -41,9 +41,11 @@ type Issue struct {
 type Ticket struct {
 	Issue
 	Description string
-	Points      *float64
-	Comments    []Comment
-	Links       []Link
+	// Parent is the epic or parent ticket's key, empty when it has none.
+	Parent   string
+	Points   *float64
+	Comments []Comment
+	Links    []Link
 }
 
 // Link is another ticket linked to this one, read from this ticket's side,
@@ -130,13 +132,19 @@ func AssignedJQL(sprint string) string {
 	return fmt.Sprintf(`assignee = currentUser() AND sprint = %s ORDER BY updated DESC`, quote(sprint))
 }
 
-// MineJQL lists the current user's open tickets in the given sprints.
-func MineJQL(sprints ...string) string {
+// OthersJQL lists the open tickets a refinement is compared with: the
+// current user's in the given sprints or any open sprint, and, when parent is
+// set, the rest of that epic, whoever has it.
+func OthersJQL(parent string, sprints ...string) string {
 	quoted := make([]string, len(sprints))
 	for i, sprint := range sprints {
 		quoted[i] = quote(sprint)
 	}
-	return fmt.Sprintf(`assignee = currentUser() AND sprint in (%s) AND statusCategory != Done ORDER BY key ASC`, strings.Join(quoted, ", "))
+	scopes := []string{fmt.Sprintf("(assignee = currentUser() AND (sprint in (%s) OR sprint in openSprints()))", strings.Join(quoted, ", "))}
+	if parent != "" {
+		scopes = append(scopes, "parent = "+quote(parent))
+	}
+	return fmt.Sprintf(`statusCategory != Done AND (%s) ORDER BY key ASC`, strings.Join(scopes, " OR "))
 }
 
 // Search runs a JQL query and returns the matching issues.
@@ -208,7 +216,7 @@ func (c *Client) search(ctx context.Context, jql string, extra ...string) ([]Tic
 // GetTicket reads one ticket with its description, points and comments.
 func (c *Client) GetTicket(ctx context.Context, key string) (Ticket, error) {
 	fields := strings.Join([]string{
-		"summary", "status", "description", "comment", "issuelinks", FieldStoryPoints,
+		"summary", "status", "description", "comment", "issuelinks", "parent", FieldStoryPoints,
 		FieldAcceptanceCriteria, FieldTechnicalImplementation, FieldStoryPointCriteria,
 	}, ",")
 
@@ -219,7 +227,10 @@ func (c *Client) GetTicket(ctx context.Context, key string) (Ticket, error) {
 			Status  struct {
 				Name string `json:"name"`
 			} `json:"status"`
-			Description             json.RawMessage `json:"description"`
+			Description json.RawMessage `json:"description"`
+			Parent      *struct {
+				Key string `json:"key"`
+			} `json:"parent"`
 			Points                  *float64        `json:"customfield_10026"`
 			AcceptanceCriteria      json.RawMessage `json:"customfield_10042"`
 			TechnicalImplementation json.RawMessage `json:"customfield_10043"`
@@ -258,6 +269,9 @@ func (c *Client) GetTicket(ctx context.Context, key string) (Ticket, error) {
 		},
 		Description: fieldText(raw.Fields.Description),
 		Points:      raw.Fields.Points,
+	}
+	if raw.Fields.Parent != nil {
+		ticket.Parent = raw.Fields.Parent.Key
 	}
 	for _, comment := range raw.Fields.Comment.Comments {
 		ticket.Comments = append(ticket.Comments, Comment{

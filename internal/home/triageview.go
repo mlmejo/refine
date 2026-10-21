@@ -128,8 +128,13 @@ func (m Model) viewTriaged() string {
 	return m.withFooter(body, truncate(help, m.width))
 }
 
-// renderTriage lays out a triage as bordered sections at the given width.
+// triageMaxWidth caps the triage boxes so they stay readable on wide terminals.
+const triageMaxWidth = 59
+
+// renderTriage lays out a triage as bordered sections at the given width,
+// capped at triageMaxWidth.
 func renderTriage(t draft.Triage, width int) string {
+	width = min(width, triageMaxWidth)
 	inner := max(width-4, 10)
 	var all []string
 	section := func(title string, lines []string) {

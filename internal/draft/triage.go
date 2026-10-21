@@ -43,7 +43,7 @@ type SavedTriage struct {
 	Triage    Triage
 }
 
-// TriagePrompt describes the ticket, its links and the developer's other
+// TriagePrompt describes the ticket, its links and the other open
 // tickets, for a triage that reads no code.
 func TriagePrompt(ticket jira.Ticket, others []jira.Ticket) string {
 	return TicketPrompt(ticket) + OthersPrompt(ticket.Key, others) +

@@ -313,6 +313,21 @@ func (m Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// duplicateWarning warns before writing a draft whose criteria other open
+// tickets already deliver, or that was never checked against them.
+func duplicateWarning(d draft.Draft) string {
+	switch {
+	case !d.Checked:
+		return "not checked against other open tickets; "
+	case len(d.Duplicates) > 0:
+		if len(d.Duplicates) == 1 {
+			return "1 criterion is already delivered by another ticket; "
+		}
+		return fmt.Sprintf("%d criteria are already delivered by other tickets; ", len(d.Duplicates))
+	}
+	return ""
+}
+
 // splitLeft counts the current draft's split tickets not created yet.
 func (m Model) splitLeft() int {
 	if m.refiner.Split == nil {
@@ -422,7 +437,7 @@ func (m Model) viewDrafted() string {
 		left := saved.Unanswered()
 		help = fmt.Sprintf("%d question%s still open. Stamp anyway? They stay in the draft as open, and you own proceeding without them. y/n", left, plural(left))
 	case m.confirming:
-		help = fmt.Sprintf("replace %s's Acceptance Criteria, Technical Implementation, Story Point Criteria and points (%d)", saved.Key, saved.Draft.Points)
+		help = duplicateWarning(saved.Draft) + fmt.Sprintf("replace %s's Acceptance Criteria, Technical Implementation, Story Point Criteria and points (%d)", saved.Key, saved.Draft.Points)
 		if left := m.splitLeft(); left > 0 {
 			help += fmt.Sprintf(", create %d split ticket%s linked to it", left, plural(left))
 		}
@@ -596,6 +611,24 @@ func renderDraft(saved draft.Saved, width, focus int, answer string) (string, []
 			split = mark(split, line)
 		}
 		place(fmt.Sprintf("Split · %d tickets", len(d.Split)), split)
+	}
+
+	if len(d.Duplicates) > 0 {
+		var dups []string
+		for _, dup := range d.Duplicates {
+			dups = append(dups, errorStyle.Render(dup.Ticket+" · delivered by "+dup.Key))
+			dups = append(dups, strings.Split(hang("  ", fmt.Sprintf("%q, already %q", dup.Criterion, dup.Covered), inner), "\n")...)
+		}
+		place(fmt.Sprintf("Already delivered by other tickets · %d", len(d.Duplicates)), dups)
+	}
+
+	if len(d.Elsewhere) > 0 {
+		var left []string
+		for _, item := range d.Elsewhere {
+			left = append(left, keyStyle.Render(item.Key))
+			left = append(left, strings.Split(hang("  ", item.Behaviour, inner), "\n")...)
+		}
+		place(fmt.Sprintf("Left to other tickets · %d", len(d.Elsewhere)), left)
 	}
 
 	if len(d.Relations) > 0 {
