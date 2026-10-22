@@ -152,7 +152,26 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
-	_, err := s.db.Exec("PRAGMA user_version = 8")
+	if version < 9 {
+		if _, err := s.db.Exec(`
+			CREATE TABLE experiments (
+				key      TEXT NOT NULL,
+				name     TEXT NOT NULL,
+				arm      TEXT NOT NULL,
+				assigned TEXT NOT NULL,
+				PRIMARY KEY (key, name)
+			);`); err != nil {
+			return err
+		}
+	}
+	if version < 10 {
+		if _, err := s.db.Exec(`
+			ALTER TABLE events ADD COLUMN build TEXT NOT NULL DEFAULT '';
+			ALTER TABLE events ADD COLUMN prompts TEXT NOT NULL DEFAULT '';`); err != nil {
+			return err
+		}
+	}
+	_, err := s.db.Exec("PRAGMA user_version = 10")
 	return err
 }
 
@@ -404,6 +423,10 @@ type Event struct {
 	Name    string
 	Key     string
 	Props   map[string]any
+	// Build is the commit refine ran from (-dirty with uncommitted changes)
+	// and Prompts the fingerprint of the prompts Claude was given.
+	Build   string
+	Prompts string
 }
 
 // AddEvent records an event.
@@ -415,14 +438,14 @@ func (s *Store) AddEvent(e Event) error {
 	if e.Props == nil {
 		props = []byte("{}")
 	}
-	_, err = s.db.Exec(`INSERT INTO events (at, ui, session, name, key, props) VALUES (?, ?, ?, ?, ?, ?)`,
-		e.At.UTC().Format(time.RFC3339Nano), e.UI, e.Session, e.Name, e.Key, string(props))
+	_, err = s.db.Exec(`INSERT INTO events (at, ui, session, name, key, props, build, prompts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.At.UTC().Format(time.RFC3339Nano), e.UI, e.Session, e.Name, e.Key, string(props), e.Build, e.Prompts)
 	return err
 }
 
 // Events returns the events recorded since a time, oldest first.
 func (s *Store) Events(since time.Time) ([]Event, error) {
-	rows, err := s.db.Query(`SELECT at, ui, session, name, key, props FROM events WHERE at >= ? ORDER BY id`, since.UTC().Format(time.RFC3339Nano))
+	rows, err := s.db.Query(`SELECT at, ui, session, name, key, props, build, prompts FROM events WHERE at >= ? ORDER BY id`, since.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -431,7 +454,7 @@ func (s *Store) Events(since time.Time) ([]Event, error) {
 	for rows.Next() {
 		var e Event
 		var at, props string
-		if err := rows.Scan(&at, &e.UI, &e.Session, &e.Name, &e.Key, &props); err != nil {
+		if err := rows.Scan(&at, &e.UI, &e.Session, &e.Name, &e.Key, &props, &e.Build, &e.Prompts); err != nil {
 			return nil, err
 		}
 		if e.At, err = time.Parse(time.RFC3339Nano, at); err != nil {
@@ -443,4 +466,46 @@ func (s *Store) Events(since time.Time) ([]Event, error) {
 		events = append(events, e)
 	}
 	return events, rows.Err()
+}
+
+// Assign returns the ticket's arm in the experiment, assigning one the first
+// time. Arms go in balanced pairs: the first of each pair is drawn from
+// coin, the second is the other arm, so the arms stay even.
+func (s *Store) Assign(key, name string, coin func() bool) (string, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var arm string
+	err = tx.QueryRow(`SELECT arm FROM experiments WHERE key = ? AND name = ?`, key, name).Scan(&arm)
+	if err == nil {
+		return arm, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	var count int
+	if err := tx.QueryRow(`SELECT count(*) FROM experiments WHERE name = ?`, name).Scan(&count); err != nil {
+		return "", err
+	}
+	if count%2 == 1 {
+		var last string
+		if err := tx.QueryRow(`SELECT arm FROM experiments WHERE name = ? ORDER BY assigned DESC, rowid DESC LIMIT 1`, name).Scan(&last); err != nil {
+			return "", err
+		}
+		arm = "A"
+		if last == "A" {
+			arm = "B"
+		}
+	} else if coin() {
+		arm = "B"
+	} else {
+		arm = "A"
+	}
+	if _, err := tx.Exec(`INSERT INTO experiments (key, name, arm, assigned) VALUES (?, ?, ?, ?)`,
+		key, name, arm, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return "", err
+	}
+	return arm, tx.Commit()
 }

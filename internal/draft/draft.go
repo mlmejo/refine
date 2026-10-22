@@ -3,7 +3,9 @@ package draft
 
 import (
 	_ "embed"
+	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
 	"sort"
 	"strconv"
@@ -24,6 +26,44 @@ var questionRules = withShared(questionsText)
 
 //go:embed questions.schema.json
 var questionsSchema string
+
+//go:embed plain.md
+var plainText string
+
+// plainRules and plainSchema are the questions step in arm B of the
+// plain-names experiment: plain words in the prose, the code in terms.
+var (
+	plainRules  = questionRules + plainText
+	plainSchema = withTerms(questionsSchema)
+)
+
+// withTerms adds the required terms list to the questions schema.
+func withTerms(schema string) string {
+	var s map[string]any
+	if err := json.Unmarshal([]byte(schema), &s); err != nil {
+		panic(err)
+	}
+	s["properties"].(map[string]any)["terms"] = map[string]any{
+		"type":        "array",
+		"description": "Each plain name used in the prose, once, with the code it stands for.",
+		"items": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"required":             []string{"name", "code", "where"},
+			"properties": map[string]any{
+				"name":  map[string]any{"type": "string", "description": "The plain name exactly as written in the prose."},
+				"code":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "The identifiers it stands for."},
+				"where": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Where they live, as path:line."},
+			},
+		},
+	}
+	s["required"] = append(s["required"].([]any), "terms")
+	out, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(out)
+}
 
 //go:embed stamp.md
 var stampRules string
@@ -59,6 +99,14 @@ type Draft struct {
 	Relations      []Relation     `json:"relations"`
 	ApproachReview ApproachReview `json:"approach_review"`
 	OpenQuestions  []Choice       `json:"open_questions"`
+	// Decided is the record of earlier rounds' decisions; refine fills it,
+	// Claude does not.
+	Decided []Decided `json:"decided,omitempty"`
+	// Arm is the ticket's arm in the plain-names experiment, "" when it is
+	// not in it; refine fills it. Terms are the plain names Claude used in
+	// arm B, with the code they stand for.
+	Arm   string     `json:"arm,omitempty"`
+	Terms []Glossary `json:"terms,omitempty"`
 	// Checked is set once the stamped criteria were checked against the
 	// other open tickets; Duplicates is what that check found.
 	Checked    bool        `json:"checked,omitempty"`
@@ -83,7 +131,9 @@ type File struct {
 	New  bool   `json:"new"`
 }
 
-// StoryPointCriteria rates each dimension Low, Medium or High.
+// StoryPointCriteria rates each dimension Low, Medium or High; Testing may
+// also be N/A when QA cannot verify the ticket. Claude rates the dimensions;
+// refine fills Total from them (see Score).
 type StoryPointCriteria struct {
 	Novelty    string `json:"novelty"`
 	Risk       string `json:"risk"`
@@ -91,6 +141,44 @@ type StoryPointCriteria struct {
 	Testing    string `json:"testing"`
 	Deployment string `json:"deployment"`
 	Total      string `json:"total"`
+}
+
+var ratingValue = map[string]int{"Low": 1, "Medium": 2, "High": 3}
+
+// Score averages the five ratings (Low 1, Medium 2, High 3, N/A 0, which only
+// Testing may be) over all five and rounds to the nearest point. The sum over
+// five never lands on a half, so rounding has no tie. ok is false when a
+// rating is missing or not allowed.
+func (c StoryPointCriteria) Score() (points int, average float64, ok bool) {
+	sum := 0
+	for _, r := range []string{c.Novelty, c.Risk, c.Dependency, c.Deployment} {
+		v, found := ratingValue[r]
+		if !found {
+			return 0, 0, false
+		}
+		sum += v
+	}
+	if c.Testing != "N/A" {
+		v, found := ratingValue[c.Testing]
+		if !found {
+			return 0, 0, false
+		}
+		sum += v
+	}
+	average = float64(sum) / 5
+	return int(math.Round(average)), average, true
+}
+
+// Scored fills Total and returns the points. Criteria that cannot be scored
+// keep an empty Total, so they read as unrated, and score 0 points.
+func (c StoryPointCriteria) Scored() (StoryPointCriteria, int) {
+	points, average, ok := c.Score()
+	if !ok {
+		c.Total = ""
+		return c, 0
+	}
+	c.Total = fmt.Sprintf("%s (%.1f)", [...]string{"", "Low", "Medium", "High"}[points], average)
+	return c, points
 }
 
 // Deployment is how the ticket reaches production, and what must be settled first.
@@ -177,6 +265,14 @@ func clip(text string, limit int) string {
 		limit--
 	}
 	return strings.TrimSpace(text[:limit]) + "…"
+}
+
+// Glossary is a plain name used in place of code, with the identifiers it
+// stands for and where they live.
+type Glossary struct {
+	Name  string   `json:"name"`
+	Code  []string `json:"code"`
+	Where []string `json:"where"`
 }
 
 // ApproachReview is Claude's check of the developer's approach.
@@ -280,7 +376,7 @@ func AnswersPrompt(previous Saved) string {
 	var out strings.Builder
 	for _, question := range previous.Draft.Questions() {
 		answer := strings.TrimSpace(previous.Answers[question])
-		if answer == "" {
+		if !decided(answer) {
 			continue
 		}
 		if out.Len() == 0 {
@@ -294,7 +390,7 @@ func AnswersPrompt(previous Saved) string {
 // RevisePrompt asks a resumed session for its next round of questions, with
 // the answers to the last.
 func RevisePrompt(previous Saved) string {
-	return "Revise your findings and questions with the team's answers. Reread code where an answer changes what you need to know, and recheck every earlier claim an answer touches. An answer can raise new decisions; ask them." + AnswersPrompt(previous)
+	return "Revise your findings and questions with the team's answers. Reread code where an answer changes what you need to know, and recheck every earlier claim an answer touches. An answer can raise new decisions; ask them." + DecidedPrompt(Decide(previous)) + UnknownPrompt(previous)
 }
 
 // Stamp is the write-up of a ticket whose questions are settled, shaped by
@@ -306,6 +402,17 @@ type Stamp struct {
 	Points                  int                `json:"points"`
 	Split                   []Child            `json:"split"`
 	Elsewhere               []Elsewhere        `json:"elsewhere"`
+}
+
+// Scored is the stamp with its points and its split tickets' points worked out
+// from their ratings: Claude rates, refine scores.
+func (s Stamp) Scored() Stamp {
+	s.StoryPointCriteria, s.Points = s.StoryPointCriteria.Scored()
+	s.Split = slices.Clone(s.Split)
+	for i := range s.Split {
+		s.Split[i].StoryPointCriteria, s.Split[i].Points = s.Split[i].StoryPointCriteria.Scored()
+	}
+	return s
 }
 
 // WithStamp is the draft with the stamp's fields filled in. A new stamp has
@@ -328,10 +435,10 @@ func (d Draft) WithStamp(s Stamp) Draft {
 func StampPrompt(saved Saved, others []jira.Ticket) string {
 	var out strings.Builder
 	out.WriteString("The questions are done. Write up the ticket as your instructions say.\n")
-	out.WriteString(AnswersPrompt(saved))
+	out.WriteString(DecidedPrompt(Decide(saved)))
 	var open []string
 	for _, question := range saved.Draft.Questions() {
-		if strings.TrimSpace(saved.Answers[question]) == "" {
+		if !decided(saved.Answers[question]) {
 			open = append(open, question)
 		}
 	}

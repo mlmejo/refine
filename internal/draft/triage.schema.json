@@ -4,6 +4,7 @@
   "required": [
     "problem",
     "solution",
+    "items",
     "blockers",
     "scope_questions",
     "relations"
@@ -16,6 +17,37 @@
     "solution": {
       "type": "string",
       "description": "One sentence, two at most, on the outcome the ticket asks for, not a design."
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "item",
+          "quote",
+          "section"
+        ],
+        "properties": {
+          "item": {
+            "type": "string",
+            "description": "The thing to deliver, in a few plain words."
+          },
+          "quote": {
+            "type": "string",
+            "description": "The ticket's own words for it, verbatim and short."
+          },
+          "section": {
+            "enum": [
+              "solution",
+              "acceptance_criteria",
+              "description"
+            ],
+            "description": "Where the quote comes from: the Solution, the Acceptance Criteria, or elsewhere in the description when the ticket has no such sections."
+          }
+        }
+      },
+      "description": "Every distinct thing the ticket asks to deliver, from the Solution and Acceptance Criteria. The Problem is context, not an item."
     },
     "blockers": {
       "type": "array",
@@ -33,7 +65,8 @@
           "question",
           "options",
           "recommended",
-          "why"
+          "why",
+          "consequences"
         ],
         "properties": {
           "question": {
@@ -55,6 +88,14 @@
           "why": {
             "type": "string",
             "description": "The reason for the recommendation, in a few words."
+          },
+          "consequences": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "What this option leads to, in under 15 words, written evenly with the others."
+            },
+            "description": "One line per option, in the same order as options; empty when options is empty."
           }
         }
       }

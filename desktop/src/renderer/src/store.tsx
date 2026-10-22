@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api } from './api'
-import type { Info, Issue, Job, JobKind, RepoStatus, Saved, SavedSet } from './types'
+import type { Info, Issue, Job, JobKind, RepoStatus, Saved, SavedSet, TicketContext } from './types'
 
 export type Tab = 'ticket' | 'triage' | 'brief' | 'approach' | 'draft'
 
@@ -17,6 +17,9 @@ export type TicketState = {
   // the answers to the triage's scope questions, keyed by question.
   approach?: string
   scope?: Record<string, string>
+  // context is the ticket as Jira has it, read once when first shown.
+  context?: TicketContext
+  contextError?: string
 }
 
 // SyncAsk is the stale-repos question before a run reads the code.
@@ -137,6 +140,17 @@ function useRefineState() {
       if (!tickets[key]?.saved) void loadSaved(key)
     },
     [tickets, loadSaved, track]
+  )
+
+  const loadContext = useCallback(
+    async (key: string) => {
+      try {
+        patch(key, { context: await api.context(key), contextError: undefined })
+      } catch (err) {
+        patch(key, { contextError: (err as Error).message })
+      }
+    },
+    [patch]
   )
 
   const setTab = useCallback(
@@ -425,6 +439,7 @@ function useRefineState() {
     replaceIssue,
     dropIssue,
     loadSaved,
+    loadContext,
     triage,
     brief,
     ask,

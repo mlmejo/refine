@@ -175,12 +175,12 @@ func TestStampForksTheQuestionsSession(t *testing.T) {
 	dir := t.TempDir()
 	bin, argsFile := filepath.Join(dir, "claude"), filepath.Join(dir, "args")
 	script := "#!/bin/sh\necho \"$@\" > '" + argsFile + "'\n" +
-		`echo '{"type":"result","subtype":"success","session_id":"s-2","total_cost_usd":1.2,"structured_output":{"acceptance_criteria":["QA sees it."],"technical_implementation":[],"story_point_criteria":{"total":"Low"},"points":1,"split":[]}}'` + "\n"
+		`echo '{"type":"result","subtype":"success","session_id":"s-2","total_cost_usd":1.2,"structured_output":{"acceptance_criteria":["QA sees it."],"technical_implementation":[],"story_point_criteria":{"novelty":"Low","risk":"Low","dependency":"Medium","testing":"N/A","deployment":"Medium"},"split":[{"title":"SDK - Admin","acceptance_criteria":[],"technical_implementation":[],"story_point_criteria":{"novelty":"Medium","risk":"Medium","dependency":"Low","testing":"Medium","deployment":"Low"}}]}}'` + "\n"
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	stamp, run, err := Runner{Bin: bin, Dir: dir}.Stamp(context.Background(), "q-1", "stamp")
-	if err != nil || run.CostUSD != 1.2 || stamp.Points != 1 {
+	if err != nil || run.CostUSD != 1.2 || stamp.Points != 1 || stamp.StoryPointCriteria.Total != "Low (1.2)" || stamp.Split[0].Points != 2 {
 		t.Fatalf("stamp = %+v run %+v err %v", stamp, run, err)
 	}
 	args, _ := os.ReadFile(argsFile)
@@ -200,7 +200,7 @@ func TestStampPromptCarriesAnswersAndOpenQuestions(t *testing.T) {
 		Answers: map[string]string{"Server count or client count?": "server"},
 	}
 	got := StampPrompt(saved, nil)
-	if !strings.Contains(got, "- Q: Server count or client count?\n  A: \"server\"") {
+	if !strings.Contains(got, "[0] Q: Server count or client count?\n    A: \"server\"") {
 		t.Errorf("answers missing:\n%s", got)
 	}
 	if !strings.Contains(got, "proceed with these still open") || !strings.Contains(got, "- Who sets the env?\n- Reset on open?\n") {
@@ -349,7 +349,7 @@ func TestQuestionsAndAnswers(t *testing.T) {
 	}
 
 	got := RevisePrompt(saved)
-	if !strings.Contains(got, "- Q: Which host deploys?\n  A: \"Forge\"\n") || strings.Contains(got, "Keep the client event?") {
+	if !strings.Contains(got, "[0] Q: Which host deploys?\n    A: \"Forge\"\n") || strings.Contains(got, "Keep the client event?") {
 		t.Errorf("revise prompt:\n%s", got)
 	}
 	if AnswersPrompt(Saved{}) != "" {
@@ -364,8 +364,12 @@ func TestQuestionsAndAnswers(t *testing.T) {
 
 func TestBriefAndFromBriefPrompts(t *testing.T) {
 	context := Context(jira.Ticket{Issue: jira.Issue{Key: "GEEK-8", Summary: "Credits"}}, nil, nil, "")
-	if got := BriefPrompt(context); !strings.HasPrefix(got, "Ticket GEEK-8: Credits") || !strings.Contains(got, "Brief the developer") || strings.Contains(got, "approach, written") {
+	if got := BriefPrompt(context, nil); !strings.HasPrefix(got, "Ticket GEEK-8: Credits") || !strings.Contains(got, "brief the developer") || strings.Contains(got, "approach, written") || strings.Contains(got, "items, from its triage") {
 		t.Errorf("brief prompt:\n%s", got)
+	}
+	items := []Item{{Item: "online count", Quote: "poll /onlines/count", Section: "solution"}}
+	if got := BriefPrompt(context, items); !strings.Contains(got, "The ticket's items, from its triage:\n- online count (solution: \"poll /onlines/count\")\n") {
+		t.Errorf("brief prompt with items:\n%s", got)
 	}
 	if got := FromBriefPrompt("Reuse the ledger? not sure"); !strings.Contains(got, "read your brief") || !strings.Contains(got, `"Reuse the ledger? not sure"`) {
 		t.Errorf("from brief prompt:\n%s", got)
@@ -518,5 +522,115 @@ func TestOpenQuestionsReadOldTextWhole(t *testing.T) {
 	}
 	if got := d.OpenQuestions[1].String(); got != "Rename? Options: yes; no. Recommended: yes, consistency." {
 		t.Errorf("string = %q", got)
+	}
+}
+
+func TestDecideCarriesEveryRoundAndStampSeesIt(t *testing.T) {
+	round1 := Saved{Draft: Draft{
+		Deployment:    Deployment{Blockers: []string{"Who deploys?"}},
+		OpenQuestions: []Choice{{Question: "Rename?", Options: []string{"yes", "no"}, Recommended: "yes", Why: "parity"}, {Question: "Skipped?"}},
+	}, Answers: map[string]string{"Who deploys?": "DevOps", "Rename?": "no"}}
+	log := Decide(round1)
+	if len(log) != 2 || log[1] != (Decided{Question: "Rename?", Answer: "no", Recommended: "yes", Why: "parity"}) {
+		t.Fatalf("round 1 log = %+v", log)
+	}
+
+	// Round 2 asks Rename? again and one new question; the log keeps the
+	// latest answer once and adds the new one.
+	round2 := Saved{Draft: Draft{Decided: log, OpenQuestions: []Choice{{Question: "Rename?"}, {Question: "Test?"}}},
+		Answers: map[string]string{"Rename?": "yes", "Test?": "manual"}}
+	log = Decide(round2)
+	if len(log) != 3 || log[1].Answer != "yes" || log[2].Question != "Test?" {
+		t.Fatalf("round 2 log = %+v", log)
+	}
+
+	clear := Saved{Draft: Draft{Decided: log}}
+	if !clear.Draft.Clear() || round2.Draft.Clear() {
+		t.Error("clear: only a draft with no questions left is clear")
+	}
+	got := StampPrompt(clear, nil)
+	for _, want := range []string{"Every decision the developer made", "[0] Q: Who deploys?\n    A: \"DevOps\"", "[1] Q: Rename?\n    A: \"yes\"", "[2] Q: Test?"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stamp prompt missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestPlainArmSendsPlainRulesAndTerms(t *testing.T) {
+	a := strings.Join(Runner{}.args("p", ""), "\x00")
+	b := strings.Join(Runner{Plain: true}.args("p", ""), "\x00")
+	if strings.Contains(a, "## Plain names") || strings.Contains(a, `"terms"`) {
+		t.Error("arm A got the plain rules or terms")
+	}
+	if !strings.Contains(b, "## Plain names") || !strings.Contains(b, `"terms"`) {
+		t.Error("arm B is missing the plain rules or terms")
+	}
+	var schema map[string]any
+	if err := json.Unmarshal([]byte(plainSchema), &schema); err != nil {
+		t.Fatal(err)
+	}
+	if req := fmt.Sprint(schema["required"]); !strings.Contains(req, "terms") || !strings.Contains(req, "open_questions") {
+		t.Errorf("required = %s", req)
+	}
+}
+
+func TestUnknownIsNotADecision(t *testing.T) {
+	saved := Saved{Draft: Draft{OpenQuestions: []Choice{{Question: "Who owns it?"}, {Question: "Rename?"}}},
+		Answers: map[string]string{"Who owns it?": Unknown("ask the PO"), "Rename?": "yes"}}
+	if note, ok := IsUnknown(saved.Answers["Who owns it?"]); !ok || note != "ask the PO" {
+		t.Fatalf("IsUnknown = %q, %v", note, ok)
+	}
+	if saved.Unanswered() != 1 {
+		t.Errorf("unanswered = %d, want 1: not knowing yet is not a decision", saved.Unanswered())
+	}
+	if log := Decide(saved); len(log) != 1 || log[0].Question != "Rename?" {
+		t.Errorf("log = %+v", log)
+	}
+	got := RevisePrompt(saved)
+	if !strings.Contains(got, "does not know these yet") || !strings.Contains(got, "- Who owns it?\n  They need to find out: \"ask the PO\"") {
+		t.Errorf("revise prompt:\n%s", got)
+	}
+	if strings.Contains(AnswersPrompt(saved), "?unknown") {
+		t.Error("answers prompt passes the unknown mark to Claude as an answer")
+	}
+}
+
+func TestEveryRunPinsTheModelAndIsolatesSettings(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "claude")
+	// The fake claude records its arguments and answers with an empty triage.
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + filepath.Join(dir, "args") + "\n" +
+		`echo '{"type":"result","subtype":"success","session_id":"s","total_cost_usd":0,"structured_output":{"problem":"p","solution":"s","blockers":[],"scope_questions":[],"relations":[]}}'` + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (Runner{Bin: bin, Dir: dir}).Triage(context.Background(), "p"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "args"))
+	got := string(data)
+	if !strings.Contains(got, "--model\n"+Model+"\n") || !strings.Contains(got, "--setting-sources\nproject,local\n") {
+		t.Errorf("args:\n%s", got)
+	}
+}
+
+func TestScoreAveragesTheRatingsOverFive(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		c      StoryPointCriteria
+		points int
+		total  string
+	}{
+		{"no QA counts as 0", StoryPointCriteria{Novelty: "Low", Risk: "Low", Dependency: "Medium", Testing: "N/A", Deployment: "Medium"}, 1, "Low (1.2)"},
+		{"all low", StoryPointCriteria{Novelty: "Low", Risk: "Low", Dependency: "Low", Testing: "Low", Deployment: "Low"}, 1, "Low (1.0)"},
+		{"rounds up from .6", StoryPointCriteria{Novelty: "Medium", Risk: "Low", Dependency: "Medium", Testing: "Medium", Deployment: "Low"}, 2, "Medium (1.6)"},
+		{"all high", StoryPointCriteria{Novelty: "High", Risk: "High", Dependency: "High", Testing: "High", Deployment: "High"}, 3, "High (3.0)"},
+		{"N/A only for testing", StoryPointCriteria{Novelty: "Low", Risk: "Low", Dependency: "Low", Testing: "Low", Deployment: "N/A"}, 0, ""},
+		{"missing rating", StoryPointCriteria{Novelty: "Low", Total: "Medium"}, 0, ""},
+	} {
+		got, points := tc.c.Scored()
+		if points != tc.points || got.Total != tc.total {
+			t.Errorf("%s: points %d total %q, want %d %q", tc.name, points, got.Total, tc.points, tc.total)
+		}
 	}
 }

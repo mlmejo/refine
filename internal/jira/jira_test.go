@@ -147,6 +147,9 @@ func TestGetTicketReadsDescriptionPointsCommentsAndLinks(t *testing.T) {
 	if ticket.Description != "Problems\n\nAPIs cannot talk to StarVault" {
 		t.Errorf("description = %q", ticket.Description)
 	}
+	if ticket.DescriptionMarkdown != "## Problems\n\n---\n\nAPIs cannot talk to StarVault" {
+		t.Errorf("description markdown = %q", ticket.DescriptionMarkdown)
+	}
 	if ticket.Parent != "GEEK-1" {
 		t.Errorf("parent = %q", ticket.Parent)
 	}
@@ -450,5 +453,30 @@ func TestTicketsReadDescriptions(t *testing.T) {
 	}
 	if tickets[1].Description != "" {
 		t.Errorf("no description = %+v", tickets[1])
+	}
+}
+
+func TestFieldMarkdownKeepsFormatting(t *testing.T) {
+	raw := json.RawMessage(`{"type":"doc","content":[
+		{"type":"paragraph","content":[
+			{"type":"text","text":"Link: ","marks":[{"type":"strong"}]},
+			{"type":"text","text":"https://example.com/1","marks":[{"type":"link","attrs":{"href":"https://example.com/1"}}]}
+		]},
+		{"type":"heading","attrs":{"level":3},"content":[{"type":"text","text":"Steps"}]},
+		{"type":"bulletList","content":[
+			{"type":"listItem","content":[{"type":"paragraph","content":[
+				{"type":"text","text":"call "},{"type":"text","text":"track()","marks":[{"type":"code"}]},
+				{"type":"text","text":" on "},{"type":"text","text":"login","marks":[{"type":"link","attrs":{"href":"https://example.com/l"}}]}
+			]}]},
+			{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"done","marks":[{"type":"em"}]}]}]}
+		]},
+		{"type":"blockquote","content":[{"type":"paragraph","content":[{"type":"text","text":"as legacy"}]}]}
+	]}`)
+	want := "**Link:** https://example.com/1\n\n### Steps\n\n- call `track()` on [login](https://example.com/l)\n- *done*\n\n> as legacy"
+	if got := fieldMarkdown(raw); got != want {
+		t.Errorf("markdown:\n%s\nwant:\n%s", got, want)
+	}
+	if got := fieldMarkdown(json.RawMessage(`"plain"`)); got != "plain" {
+		t.Errorf("string field = %q", got)
 	}
 }

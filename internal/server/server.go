@@ -24,6 +24,7 @@ import (
 	"github.com/mlmejo/refine/internal/home"
 	"github.com/mlmejo/refine/internal/jira"
 	"github.com/mlmejo/refine/internal/reposcan"
+	"github.com/mlmejo/refine/internal/version"
 )
 
 // Server answers the desktop app. Every request needs the token.
@@ -71,6 +72,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/hidden/{key}", s.hide(true))
 	mux.HandleFunc("DELETE /api/hidden/{key}", s.hide(false))
 	mux.HandleFunc("GET /api/tickets/{key}/saved", s.saved)
+	mux.HandleFunc("GET /api/tickets/{key}/context", s.context)
 	mux.HandleFunc("PUT /api/tickets/{key}/answers", s.answers)
 	mux.HandleFunc("POST /api/tickets/{key}/reveal", s.reveal)
 	mux.HandleFunc("POST /api/tickets/{key}/write", s.write)
@@ -134,6 +136,8 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 		"ready_sprint": s.Refiner.ReadySprint,
 		"sync":         s.Refiner.Check != nil,
 		"tracking":     s.Source.Track != nil && s.Tracking,
+		"build":        version.Build(),
+		"prompts":      draft.PromptsVersion(),
 	})
 }
 
@@ -217,6 +221,53 @@ func (s *Server) setHidden(key string, hide bool) error {
 	}
 	s.hidden = hidden
 	return nil
+}
+
+// context is the ticket as Jira has it, unsummarised: description,
+// comments, links, and its epic or parent with the parent's other children.
+func (s *Server) context(w http.ResponseWriter, r *http.Request) {
+	if s.Source.Ticket == nil {
+		fail(w, http.StatusNotImplemented, errors.New("no ticket reader"))
+		return
+	}
+	t, err := s.Source.Ticket(r.Context(), r.PathValue("key"))
+	if err != nil {
+		fail(w, http.StatusBadGateway, err)
+		return
+	}
+	out := ticketContext{
+		issue:         toIssue(t.Issue),
+		Description:   t.Description,
+		DescriptionMD: t.DescriptionMarkdown,
+		Comments:      []comment{},
+		Links:         []link{},
+		Siblings:      []issue{},
+	}
+	for _, c := range t.Comments {
+		out.Comments = append(out.Comments, comment{Author: c.Author, Body: c.Body})
+	}
+	for _, l := range t.Links {
+		out.Links = append(out.Links, link{Relation: l.Relation, Key: l.Key, Summary: l.Summary, Status: l.Status})
+	}
+	if t.Parent != "" && s.Source.Family != nil {
+		// A failed family read leaves the ticket itself to show.
+		if family, err := s.Source.Family(r.Context(), t.Parent); err == nil {
+			for _, f := range family {
+				switch f.Key {
+				case t.Parent:
+					p := toIssue(f)
+					out.Parent = &p
+				case t.Key:
+				default:
+					out.Siblings = append(out.Siblings, toIssue(f))
+				}
+			}
+		}
+		if out.Parent == nil {
+			out.Parent = &issue{Key: t.Parent}
+		}
+	}
+	reply(w, out)
 }
 
 // saved is the ticket's latest draft, brief and triage, each null when it
@@ -592,6 +643,12 @@ func (s *Server) startJob(w http.ResponseWriter, r *http.Request) {
 		}
 		if saved.Step == "" {
 			fail(w, http.StatusConflict, errors.New("this draft is from before steps; redraft it to stamp"))
+			return
+		}
+		// Stamp only once a round comes back with no questions: by then
+		// Claude has seen every answer and the developer every decision.
+		if !saved.Draft.Clear() {
+			fail(w, http.StatusConflict, errors.New("Claude still has questions: decide them and run the next round; stamp once a round comes back with none"))
 			return
 		}
 		work = func(ctx context.Context, i jira.Issue, j *job) error {

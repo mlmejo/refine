@@ -36,15 +36,59 @@ export type Choice = {
   options: string[] | null
   recommended: string
   why: string
+  // consequences say what each option leads to, one per option.
+  consequences?: string[] | null
+  // evidence are indexes into the draft's findings that the question rests on.
+  evidence?: number[] | null
+  // anchor is the ticket text the decision serves; source none means the
+  // ticket does not ask for it.
+  anchor?: Anchor | null
+  // reopens is the index into decided of the earlier decision this question
+  // reopens; -1 or absent when none.
+  reopens?: number | null
 }
+
+export type Anchor = {
+  quote: string
+  source: 'description' | 'criteria' | 'comment' | 'link' | 'epic' | 'none'
+  ref: string
+}
+
+// TicketContext is a ticket as Jira has it, unsummarised.
+export type TicketContext = Issue & {
+  description: string
+  // The description as markdown, with Jira's headings, rules, lists and links.
+  description_md?: string
+  comments: { author: string; body: string }[]
+  links: { relation: string; key: string; summary: string; status: string }[]
+  parent: Issue | null
+  siblings: Issue[]
+}
+
+// UNKNOWN starts an "I don't know yet" answer, then what to find out;
+// draft.Unknown in Go writes the same.
+export const UNKNOWN = '?unknown:'
+
+export function unknownNote(answer: string): string | null {
+  const a = answer.trim()
+  return a.startsWith(UNKNOWN) ? a.slice(UNKNOWN.length).trim() : null
+}
+
+// Term is a plain name used in place of code (plain-names experiment, arm B).
+export type Term = { name: string; code: string[] | null; where: string[] | null }
 
 // ScopeQuestion asks what to build; the developer answers it with their
 // approach.
 export type ScopeQuestion = Choice
 
+// Item is one thing the ticket asks for, quoted from its section.
+export type Item = { item: string; quote: string; section: string }
+
 export type Triage = {
   problem: string
   solution: string
+  // Missing on triages made before items.
+  items?: Item[] | null
   blockers: string[] | null
   scope_questions: ScopeQuestion[] | null
   relations: Relation[] | null
@@ -61,7 +105,19 @@ type Run = {
 
 export type SavedTriage = Run & { triage: Triage }
 
+export type ItemStatus = {
+  item: string
+  status: 'needed' | 'done' | 'looks_unused' | 'ask_team' | 'blocked'
+  evidence: string
+  note: string
+}
+
+export type Claim = { claim: string; finding: string; evidence: string }
+
 export type Brief = {
+  // Missing on briefs made before items were checked.
+  items?: ItemStatus[] | null
+  claims?: Claim[] | null
   summary: string
   flow: string[] | null
   parts: { repo: string; path: string; role: string }[] | null
@@ -111,6 +167,11 @@ export type Draft = {
     alternatives: string[] | null
   }
   open_questions: Choice[] | null
+  // decided is the record of earlier rounds' decisions, with Claude's picks.
+  decided?: Decided[] | null
+  // arm is the plain-names experiment arm, A or B; terms back arm B's prose.
+  arm?: string
+  terms?: Term[] | null
   checked?: boolean
   duplicates?: { ticket: string; criterion: string; key: string; covered: string }[] | null
 }
@@ -133,6 +194,8 @@ export type Saved = {
   scope?: Record<string, string> | null
   children?: Record<string, string> | null
 }
+
+export type Decided = { question: string; answer: string; recommended?: string; why?: string }
 
 export type SavedSet = {
   draft: Saved | null
@@ -185,8 +248,13 @@ export function questions(d: Draft): string[] {
   return [...(d.deployment.blockers ?? []), ...(d.open_questions ?? []).map((q) => q.question)]
 }
 
+// unanswered counts questions without a decision; "I don't know yet" is
+// not one.
 export function unanswered(s: Saved): number {
-  return questions(s.draft).filter((q) => !(s.answers?.[q] ?? '').trim()).length
+  return questions(s.draft).filter((q) => {
+    const a = (s.answers?.[q] ?? '').trim()
+    return !a || unknownNote(a) !== null
+  }).length
 }
 
 // stamped matches draft.Saved.Stamped: everything but the questions step.

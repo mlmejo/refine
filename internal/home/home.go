@@ -53,6 +53,10 @@ type Source struct {
 	Repos      func() map[string]string
 	AddRepo    func(name, dir string) error
 	RemoveRepo func(name string) error
+	// Ticket reads a ticket in full, and Family an epic or parent ticket
+	// with its children; the desktop app shows them unsummarised.
+	Ticket func(ctx context.Context, key string) (jira.Ticket, error)
+	Family func(ctx context.Context, parent string) ([]jira.Issue, error)
 	// Track records a usage event when tracking is on; it may be nil.
 	Track func(name, key string, props map[string]any)
 }

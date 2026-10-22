@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mlmejo/refine/internal/config"
 	"github.com/mlmejo/refine/internal/draft"
 	"github.com/mlmejo/refine/internal/home"
 	"github.com/mlmejo/refine/internal/jira"
@@ -77,5 +78,33 @@ func TestTrackedRecordsRunsOnlyWhenOn(t *testing.T) {
 	e := events[0]
 	if e.Name != "run" || e.UI != "gui" || e.Key != "GEEK-1" || e.Props["kind"] != "triage" || e.Props["ok"] != true || e.Props["cost_usd"] != 0.04 {
 		t.Errorf("event = %+v", e)
+	}
+}
+
+func TestExperimentArmIsPerTicketAndSticky(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "r.db"), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	on, off := config.Experiments{PlainNames: true}, config.Experiments{}
+
+	if arm := experimentArm(off, s, "GEEK-1", nil); arm != "" {
+		t.Errorf("off: arm %q", arm)
+	}
+	first := experimentArm(on, s, "GEEK-1", nil)
+	if first != "A" && first != "B" {
+		t.Fatalf("on: arm %q", first)
+	}
+	if again := experimentArm(on, s, "GEEK-1", nil); again != first {
+		t.Errorf("reassigned %q to %q", first, again)
+	}
+	// A later round keeps its draft's arm; a ticket in progress before the
+	// experiment stays out.
+	if arm := experimentArm(on, s, "GEEK-2", &draft.Saved{Draft: draft.Draft{Arm: "B"}}); arm != "B" {
+		t.Errorf("later round: arm %q", arm)
+	}
+	if arm := experimentArm(on, s, "GEEK-3", &draft.Saved{}); arm != "" {
+		t.Errorf("in progress before the experiment: arm %q", arm)
 	}
 }

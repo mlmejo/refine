@@ -100,7 +100,7 @@ func TestSaveChildrenPersistsAndRewritesMarkdown(t *testing.T) {
 func TestOpenMigratesVersionOneDatabase(t *testing.T) {
 	dir := t.TempDir()
 	s := open(t, dir)
-	if _, err := s.db.Exec(`ALTER TABLE drafts DROP COLUMN answers; ALTER TABLE drafts DROP COLUMN session_cost_usd; ALTER TABLE drafts DROP COLUMN turns; ALTER TABLE drafts DROP COLUMN usage; ALTER TABLE drafts DROP COLUMN children; ALTER TABLE drafts DROP COLUMN step; ALTER TABLE drafts DROP COLUMN scope; DROP TABLE outlines; DROP TABLE briefs; DROP TABLE triages; DROP TABLE events; PRAGMA user_version = 1`); err != nil {
+	if _, err := s.db.Exec(`ALTER TABLE drafts DROP COLUMN answers; ALTER TABLE drafts DROP COLUMN session_cost_usd; ALTER TABLE drafts DROP COLUMN turns; ALTER TABLE drafts DROP COLUMN usage; ALTER TABLE drafts DROP COLUMN children; ALTER TABLE drafts DROP COLUMN step; ALTER TABLE drafts DROP COLUMN scope; DROP TABLE outlines; DROP TABLE briefs; DROP TABLE triages; DROP TABLE events; DROP TABLE experiments; PRAGMA user_version = 1`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
@@ -197,15 +197,36 @@ func TestEventsRoundTrip(t *testing.T) {
 	if err := s.AddEvent(Event{At: at, UI: "gui", Session: "s1", Name: "view", Key: "GEEK-1", Props: map[string]any{"tab": "draft"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AddEvent(Event{At: at.Add(time.Minute), UI: "gui", Session: "s1", Name: "run"}); err != nil {
+	if err := s.AddEvent(Event{At: at.Add(time.Minute), UI: "gui", Session: "s1", Name: "run", Build: "abc123-dirty", Prompts: "p1"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Events(at.Add(time.Second))
-	if err != nil || len(got) != 1 || got[0].Name != "run" || got[0].Props == nil {
+	if err != nil || len(got) != 1 || got[0].Name != "run" || got[0].Props == nil || got[0].Build != "abc123-dirty" || got[0].Prompts != "p1" {
 		t.Fatalf("events since = %+v, %v", got, err)
 	}
 	all, _ := s.Events(time.Time{})
 	if len(all) != 2 || all[0].Props["tab"] != "draft" || all[0].Key != "GEEK-1" {
 		t.Errorf("events = %+v", all)
+	}
+}
+
+func TestAssignKeepsArmsBalancedAndSticky(t *testing.T) {
+	s := open(t, t.TempDir())
+	flips := []bool{true, false, true}
+	coin := func() bool { f := flips[0]; flips = flips[1:]; return f }
+	var arms []string
+	for _, key := range []string{"GEEK-1", "GEEK-2", "GEEK-3", "GEEK-4", "GEEK-5", "GEEK-6"} {
+		arm, err := s.Assign(key, "plain_names", coin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		arms = append(arms, arm)
+	}
+	// Coin: B, A, B for the first of each pair; the second is the other arm.
+	if got := strings.Join(arms, ""); got != "BAABBA" {
+		t.Errorf("arms = %s, want BAABBA", got)
+	}
+	if again, _ := s.Assign("GEEK-2", "plain_names", coin); again != "A" {
+		t.Errorf("GEEK-2 reassigned to %s", again)
 	}
 }

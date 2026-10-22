@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { Sparkles } from 'lucide-react'
 import { useRefine } from '../store'
 import type { ScopeQuestion } from '../types'
 import { BriefCards, TriageCards } from './Cards'
@@ -40,20 +41,10 @@ export function Approach({ issueKey, busy }: { issueKey: string; busy: boolean }
               <h3>
                 Scope · {Object.keys(answers).length}/{questions.length} answered
               </h3>
-              <button
-                className="link push"
-                disabled={busy}
-                onClick={() => {
-                  refine.track('use_recommendations', issueKey, { unanswered: questions.length - Object.keys(answers).length })
-                  const next = { ...scope }
-                  for (const q of questions) if (!next[q.question]?.trim()) next[q.question] = q.recommended
-                  refine.patch(issueKey, { scope: next })
-                }}
-              >
-                use recommendations
-              </button>
             </div>
-            <p className="quiet small">These settle what to build, so Claude won't ask them again. Unanswered ones come back as questions.</p>
+            <p className="quiet small">
+              These settle what to build, so Claude won't ask them again. Unanswered ones come back as questions.
+            </p>
             {questions.map((q) => (
               <ScopeAnswer
                 key={q.question}
@@ -85,6 +76,7 @@ export function Approach({ issueKey, busy }: { issueKey: string; busy: boolean }
         />
         <div className="actions">
           <button className="primary" disabled={busy} onClick={submit}>
+            <Sparkles aria-hidden />
             Ask Claude's questions <kbd>⌘↵</kbd>
           </button>
           {saved.draft && <button onClick={() => refine.setTab(issueKey, 'draft')}>Back to the draft</button>}
@@ -124,15 +116,21 @@ function ScopeAnswer({
       <legend className="scope-ask">
         <Md text={q.question} />
       </legend>
-      {options.map((option) => (
+      {answer && (
+        <button className="scope-clear" type="button" title="Clear the answer" onClick={() => onChange('')}>
+          ×
+        </button>
+      )}
+      {options.map((option, i) => (
         <label key={option} className="scope-option">
           <input type="radio" name={name} checked={answer === option} onChange={() => onChange(option)} />
           <span>
-            <Md text={option} />
-            {option === q.recommended && (
-              <span className="star" title={q.why}>
-                {' '}
-                ★ recommended{q.why ? ` · ${q.why}` : ''}
+            <span className="option-label">
+              <Md text={option} />
+            </span>
+            {q.consequences?.[i] && (
+              <span className="consequence">
+                <Md text={q.consequences[i]} />
               </span>
             )}
           </span>
@@ -145,18 +143,14 @@ function ScopeAnswer({
         <input
           className="own-answer"
           value={own ? answer.trim() === '' ? '' : answer : ''}
-          placeholder={options.length > 0 ? 'Other…' : `Your answer · suggested: ${q.recommended}`}
+          placeholder={options.length > 0 ? 'Other…' : 'Your answer'}
           onFocus={() => {
             if (!own && options.length > 0) onChange(' ')
           }}
           onChange={(e) => onChange(e.target.value || (options.length > 0 ? ' ' : ''))}
         />
       </label>
-      {answer && (
-        <button className="link" type="button" onClick={() => onChange('')}>
-          clear
-        </button>
-      )}
     </fieldset>
   )
 }
+

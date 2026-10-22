@@ -2,6 +2,8 @@ package draft
 
 import (
 	_ "embed"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -13,15 +15,35 @@ var briefRules = withShared(briefText)
 //go:embed brief.schema.json
 var briefSchema string
 
-// Brief explains the area a ticket touches to a developer new to it, before
-// they write their approach.
+// Brief checks what the ticket asks for against the code and explains the
+// area it touches to a developer new to it, before they write their approach.
 type Brief struct {
-	Summary string   `json:"summary"`
+	Items   []ItemStatus `json:"items"`
+	Claims  []Claim      `json:"claims"`
+	Summary string       `json:"summary"`
 	Flow    []string `json:"flow"`
 	Parts   []Part   `json:"parts"`
 	Terms   []Term   `json:"terms"`
 	Gotchas []string `json:"gotchas"`
 	AskTeam []string `json:"ask_team"`
+}
+
+// ItemStatus is what the code shows about one of the triage's items: needed,
+// done, looks_unused, ask_team or blocked. Whether a feature is dead is the
+// developer's call; the code can only show that it looks unused.
+type ItemStatus struct {
+	Item     string `json:"item"`
+	Status   string `json:"status"`
+	Evidence string `json:"evidence"`
+	Note     string `json:"note"`
+}
+
+// Claim is something the ticket says about today's code that the code
+// contradicts. Ticket descriptions are often written by AI and can be wrong.
+type Claim struct {
+	Claim    string `json:"claim"`
+	Finding  string `json:"finding"`
+	Evidence string `json:"evidence"`
 }
 
 // Part is a file that matters to the area, and what it does there.
@@ -56,9 +78,19 @@ type SavedBrief struct {
 	Brief     Brief
 }
 
-// BriefPrompt asks for a brief on the ticket's area.
-func BriefPrompt(context string) string {
-	return context + "\nBrief the developer on the area this ticket touches. They have not written their approach yet.\n"
+// BriefPrompt asks for a brief on the ticket's area, checking each of the
+// triage's items against the code.
+func BriefPrompt(context string, items []Item) string {
+	var out strings.Builder
+	out.WriteString(context)
+	if len(items) > 0 {
+		out.WriteString("\nThe ticket's items, from its triage:\n")
+		for _, item := range items {
+			fmt.Fprintf(&out, "- %s (%s: %q)\n", item.Item, item.Section, item.Quote)
+		}
+	}
+	out.WriteString("\nCheck the ticket against the code and brief the developer on the area it touches. They have not written their approach yet.\n")
+	return out.String()
 }
 
 // FromBriefPrompt asks the brief's session for the draft, now that the

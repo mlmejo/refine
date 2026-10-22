@@ -19,8 +19,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/mlmejo/refine/internal/app"
+	"github.com/mlmejo/refine/internal/draft"
 	"github.com/mlmejo/refine/internal/home"
 	"github.com/mlmejo/refine/internal/server"
+	"github.com/mlmejo/refine/internal/version"
 )
 
 func main() {
@@ -35,6 +37,8 @@ func run() error {
 	flag.Parse()
 	if flag.Arg(0) == "version" {
 		fmt.Println("refine TUI", home.TUIVersion)
+		fmt.Println("build", version.Build())
+		fmt.Println("prompts", draft.PromptsVersion())
 		return nil
 	}
 

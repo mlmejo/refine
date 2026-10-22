@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
+import { BookOpen, Check, FilePen, FileText, ListChecks, PenLine, RotateCcw, Stamp, X, type LucideIcon } from 'lucide-react'
 import { useRefine, type Tab } from '../store'
 import type { Issue, Job } from '../types'
 import { TriageCards, BriefCards } from './Cards'
 import { Approach } from './Approach'
 import { DraftView } from './DraftView'
+import { TicketContext } from './TicketContext'
 
 export function TicketPane({ issueKey }: { issueKey: string }) {
   const refine = useRefine()
@@ -13,12 +15,17 @@ export function TicketPane({ issueKey }: { issueKey: string }) {
   const saved = t.saved
   const running = t.job && !t.job.done ? t.job : undefined
 
-  const tabs: { id: Tab; label: string; show: boolean }[] = [
-    { id: 'ticket', label: 'Ticket', show: true },
-    { id: 'triage', label: saved?.triage ? 'Triage ✓' : 'Triage', show: true },
-    { id: 'brief', label: saved?.brief ? 'Brief ✓' : 'Brief', show: true },
-    { id: 'approach', label: 'Approach', show: true },
-    { id: 'draft', label: saved?.draft?.step === 'stamp' ? 'Draft · stamped' : 'Draft', show: !!saved?.draft }
+  const tabs: { id: Tab; label: string; icon: LucideIcon; done?: boolean; show: boolean }[] = [
+    { id: 'ticket', label: 'Ticket', icon: FileText, show: true },
+    { id: 'triage', label: 'Triage', icon: ListChecks, done: !!saved?.triage, show: true },
+    { id: 'brief', label: 'Brief', icon: BookOpen, done: !!saved?.brief, show: true },
+    { id: 'approach', label: 'Approach', icon: PenLine, show: true },
+    {
+      id: 'draft',
+      label: saved?.draft?.step === 'stamp' ? 'Draft · stamped' : 'Draft',
+      icon: saved?.draft?.step === 'stamp' ? Stamp : FilePen,
+      show: !!saved?.draft
+    }
   ]
   const site = refine.info?.site
   const jiraURL = site ? `${site.includes('://') ? site : `https://${site}`}/browse/${issue.key}` : undefined
@@ -50,7 +57,9 @@ export function TicketPane({ issueKey }: { issueKey: string }) {
                 className={`tab ${t.tab === tab.id ? 'active' : ''}`}
                 onClick={() => refine.setTab(issue.key, tab.id)}
               >
+                <tab.icon aria-hidden />
                 {tab.label}
+                {tab.done && <Check className="tab-done" aria-label="done" />}
               </button>
             ))}
         </nav>
@@ -89,17 +98,26 @@ function TabBody({ issue, tab, busy }: { issue: Issue; tab: Tab; busy: boolean }
           <Field name="Acceptance Criteria" text={issue.acceptance_criteria} />
           <Field name="Technical Implementation" text={issue.technical_implementation} />
           <Field name="Story Point Criteria" text={issue.story_point_criteria} />
+          <TicketContext issueKey={key} />
           <div className="actions">
             <button disabled={busy} onClick={() => (saved.triage ? refine.setTab(key, 'triage') : void refine.triage(key))}>
+              <ListChecks aria-hidden />
               {saved.triage ? 'See triage' : 'Triage'}
             </button>
             <button disabled={busy} onClick={() => (saved.brief ? refine.setTab(key, 'brief') : void refine.brief(key))}>
+              <BookOpen aria-hidden />
               {saved.brief ? 'See brief' : 'Brief me'}
             </button>
             <button className="primary" onClick={() => refine.setTab(key, 'approach')}>
+              <PenLine aria-hidden />
               {saved.draft ? 'Redo approach' : 'Approach & questions'}
             </button>
-            {saved.draft && <button onClick={() => refine.setTab(key, 'draft')}>Saved draft</button>}
+            {saved.draft && (
+              <button onClick={() => refine.setTab(key, 'draft')}>
+                <FileText aria-hidden />
+                Saved draft
+              </button>
+            )}
           </div>
         </div>
       )
@@ -110,6 +128,7 @@ function TabBody({ issue, tab, busy }: { issue: Issue; tab: Tab; busy: boolean }
           <Empty
             text="Triage reads the ticket from Jira alone, with no code: problem, solution, blockers, scope questions and related tickets. Quick and cheap."
             action="Triage"
+            icon={ListChecks}
             busy={busy}
             onAction={() => void refine.triage(key)}
             alt="Approach without a triage"
@@ -123,12 +142,15 @@ function TabBody({ issue, tab, busy }: { issue: Issue; tab: Tab; busy: boolean }
           <TriageCards triage={saved.triage.triage} />
           <div className="actions">
             <button className="primary" onClick={() => refine.setTab(key, 'approach')}>
+              <PenLine aria-hidden />
               Write your approach
             </button>
             <button disabled={busy} onClick={() => (saved.brief ? refine.setTab(key, 'brief') : void refine.brief(key))}>
+              <BookOpen aria-hidden />
               {saved.brief ? 'See brief' : 'Brief me'}
             </button>
             <button disabled={busy} onClick={() => void refine.triage(key)}>
+              <RotateCcw aria-hidden />
               Triage again
             </button>
           </div>
@@ -141,6 +163,7 @@ function TabBody({ issue, tab, busy }: { issue: Issue; tab: Tab; busy: boolean }
           <Empty
             text="A brief reads the code this ticket touches and explains the area before you write your approach. A draft afterwards continues its session, so it rereads little code."
             action="Brief me"
+            icon={BookOpen}
             busy={busy}
             onAction={() => void refine.brief(key)}
             alt="Approach without a brief"
@@ -154,9 +177,11 @@ function TabBody({ issue, tab, busy }: { issue: Issue; tab: Tab; busy: boolean }
           <BriefCards brief={saved.brief.brief} />
           <div className="actions">
             <button className="primary" onClick={() => refine.setTab(key, 'approach')}>
+              <PenLine aria-hidden />
               Write your approach
             </button>
             <button disabled={busy} onClick={() => void refine.brief(key)}>
+              <RotateCcw aria-hidden />
               Brief again
             </button>
           </div>
@@ -183,6 +208,7 @@ function Field({ name, text }: { name: string; text: string }) {
 function Empty(props: {
   text: string
   action: string
+  icon: LucideIcon
   busy: boolean
   onAction: () => void
   alt: string
@@ -193,6 +219,7 @@ function Empty(props: {
       <p>{props.text}</p>
       <div className="actions">
         <button className="primary" disabled={props.busy} onClick={props.onAction}>
+          <props.icon aria-hidden />
           {props.action}
         </button>
         <button onClick={props.onAlt}>{props.alt}</button>
@@ -240,6 +267,7 @@ function RunBanner({ job, notes, onCancel }: { job: Job; notes: string[]; onCanc
         <strong>{title}</strong>
         <span className="quiet">{clock}</span>
         <button className="push" onClick={onCancel}>
+          <X aria-hidden />
           Cancel
         </button>
       </div>

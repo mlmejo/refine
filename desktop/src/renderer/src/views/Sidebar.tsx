@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { Check, FolderGit2, RefreshCw, Undo2 } from 'lucide-react'
 import { useRefine } from '../store'
 import { refined, type Issue } from '../types'
 
@@ -62,13 +63,16 @@ export function Sidebar({ onRepos }: { onRepos: () => void }) {
 
       <footer className="sidebar-foot">
         <button onClick={() => void refine.refresh()} disabled={refine.loading} title="Refresh the list">
+          <RefreshCw aria-hidden className={refine.loading ? 'spin' : undefined} />
           {refine.loading ? 'Refreshing…' : 'Refresh'}
         </button>
         <button onClick={onRepos} title="The repos Claude reads">
+          <FolderGit2 aria-hidden />
           Repos
         </button>
         {refine.removed.length > 0 && (
           <button onClick={() => void refine.undo()} title="Put the last removed ticket back">
+            <Undo2 aria-hidden />
             Undo remove
           </button>
         )}
@@ -142,7 +146,7 @@ function Row({
 function Mark({ name, filled }: { name: string; filled: boolean }) {
   return (
     <span className={filled ? 'mark filled' : 'mark'}>
-      {name} {filled ? '✓' : '·'}
+      {name} {filled ? <Check aria-label="filled" /> : '·'}
     </span>
   )
 }

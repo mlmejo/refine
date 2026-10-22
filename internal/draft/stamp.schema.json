@@ -5,7 +5,6 @@
     "acceptance_criteria",
     "technical_implementation",
     "story_point_criteria",
-    "points",
     "split",
     "elsewhere"
   ],
@@ -61,8 +60,7 @@
         "risk",
         "dependency",
         "testing",
-        "deployment",
-        "total"
+        "deployment"
       ],
       "properties": {
         "novelty": {
@@ -90,7 +88,8 @@
           "enum": [
             "Low",
             "Medium",
-            "High"
+            "High",
+            "N/A"
           ]
         },
         "deployment": {
@@ -99,18 +98,8 @@
             "Medium",
             "High"
           ]
-        },
-        "total": {
-          "enum": [
-            "Low",
-            "Medium",
-            "High"
-          ]
         }
       }
-    },
-    "points": {
-      "type": "integer"
     },
     "split": {
       "type": "array",
@@ -119,7 +108,6 @@
         "additionalProperties": false,
         "required": [
           "title",
-          "points",
           "story_point_criteria",
           "acceptance_criteria",
           "technical_implementation"
@@ -128,10 +116,6 @@
           "title": {
             "type": "string",
             "description": "Parent feature, a dash, then the one behaviour, for example \"Book Management - Deleting Book\"."
-          },
-          "points": {
-            "type": "integer",
-            "description": "Usually 1, at most 3, and consistent with this child's story_point_criteria."
           },
           "acceptance_criteria": {
             "type": "array",
@@ -184,8 +168,7 @@
               "risk",
               "dependency",
               "testing",
-              "deployment",
-              "total"
+              "deployment"
             ],
             "properties": {
               "novelty": {
@@ -213,17 +196,11 @@
                 "enum": [
                   "Low",
                   "Medium",
-                  "High"
+                  "High",
+                  "N/A"
                 ]
               },
               "deployment": {
-                "enum": [
-                  "Low",
-                  "Medium",
-                  "High"
-                ]
-              },
-              "total": {
                 "enum": [
                   "Low",
                   "Medium",

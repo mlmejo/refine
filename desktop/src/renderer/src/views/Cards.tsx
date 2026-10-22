@@ -1,20 +1,53 @@
 import type { ReactNode } from 'react'
-import type { Brief, Relation, ScopeQuestion, Triage } from '../types'
+import {
+  Ban,
+  BookA,
+  Check,
+  CircleAlert,
+  CircleDashed,
+  CircleHelp,
+  EyeOff,
+  FileCode,
+  Info,
+  Lightbulb,
+  Link2,
+  ListTodo,
+  MessageCircleQuestion,
+  OctagonAlert,
+  Target,
+  TriangleAlert,
+  Workflow,
+  type LucideIcon
+} from 'lucide-react'
+import type { Brief, ItemStatus, Relation, ScopeQuestion, Triage } from '../types'
 import { Md } from './Md'
 
-export function Card({ title, children, tone }: { title: ReactNode; children: ReactNode; tone?: 'warn' }) {
+export function Card({
+  title,
+  children,
+  tone,
+  icon: Icon
+}: {
+  title: ReactNode
+  children: ReactNode
+  tone?: 'warn'
+  icon?: LucideIcon
+}) {
   return (
     <section className={`card ${tone ?? ''}`}>
-      <h3>{title}</h3>
+      <h3>
+        {Icon && <Icon aria-hidden />}
+        {title}
+      </h3>
       {children}
     </section>
   )
 }
 
-export function Bullets({ items, marker = '•' }: { items: string[] | null | undefined; marker?: string }) {
+export function Bullets({ items, marker = '•' }: { items: string[] | null | undefined; marker?: ReactNode }) {
   if (!items || items.length === 0) return <div className="quiet italic">none</div>
   return (
-    <ul className="bullets" data-marker={marker}>
+    <ul className="bullets">
       {items.map((item, i) => (
         <li key={i}>
           <span className="marker">{marker}</span>
@@ -57,26 +90,41 @@ export function Relations({ relations }: { relations: Relation[] }) {
 export function TriageCards({ triage, withScope = true }: { triage: Triage; withScope?: boolean }) {
   return (
     <div className="stack narrow">
-      <Card title="Problem">
+      <Card title="Problem" icon={CircleAlert}>
         <p>
           <Md text={triage.problem} />
         </p>
       </Card>
-      <Card title="Solution">
+      <Card title="Solution" icon={Target}>
         <p>
           <Md text={triage.solution} />
         </p>
       </Card>
-      <Card title="Blockers">
-        <Bullets items={triage.blockers} marker="⛔" />
+      {triage.items && triage.items.length > 0 && (
+        <Card title="Items" icon={ListTodo}>
+          <ul className="bullets">
+            {triage.items.map((item, i) => (
+              <li key={i}>
+                <span className="marker">•</span>
+                <span>
+                  <Md text={item.item} />
+                  <span className="quiet small"> “{item.quote}”</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+      <Card title="Blockers" icon={OctagonAlert}>
+        <Bullets items={triage.blockers} marker={<OctagonAlert className="tone-err" aria-hidden />} />
       </Card>
       {withScope && (
-        <Card title="Scope questions">
+        <Card title="Scope questions" icon={CircleHelp}>
           <ScopeList questions={triage.scope_questions} />
         </Card>
       )}
       {triage.relations && triage.relations.length > 0 && (
-        <Card title="Related tickets">
+        <Card title="Related tickets" icon={Link2}>
           <Relations relations={triage.relations} />
         </Card>
       )}
@@ -84,8 +132,8 @@ export function TriageCards({ triage, withScope = true }: { triage: Triage; with
   )
 }
 
-// ScopeList lists the scope questions with their options, the recommended
-// one starred with its reason.
+// ScopeList lists the scope questions with their options. Claude's pick is
+// left out: the developer decides on the approach screen first.
 function ScopeList({ questions }: { questions: ScopeQuestion[] | null }) {
   if (!questions || questions.length === 0) return <div className="quiet italic">none</div>
   return (
@@ -95,15 +143,62 @@ function ScopeList({ questions }: { questions: ScopeQuestion[] | null }) {
           <div className="scope-ask">
             <Md text={q.question} />
           </div>
-          {(q.options ?? []).map((option) => (
+          {(q.options ?? []).map((option, i) => (
             <div key={option} className="scope-option">
-              • <Md text={option} />
-              {option === q.recommended && <span className="star"> ★ recommended</span>}
+              •{' '}
+              <span>
+                <span className="option-label">
+                  <Md text={option} />
+                </span>
+                {q.consequences?.[i] && (
+                  <span className="consequence">
+                    <Md text={q.consequences[i]} />
+                  </span>
+                )}
+              </span>
             </div>
           ))}
-          <div className="quiet small">
-            ★ <Md text={(q.options ?? []).length === 0 ? [q.recommended, q.why].filter(Boolean).join(', ') : q.why} />
-          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const statusLabel: Record<ItemStatus['status'], [string, LucideIcon]> = {
+  needed: ['needed', CircleDashed],
+  done: ['done', Check],
+  looks_unused: ['looks unused?', EyeOff],
+  ask_team: ['ask team', MessageCircleQuestion],
+  blocked: ['blocked', Ban]
+}
+
+function StatusTag({ status }: { status: ItemStatus['status'] }) {
+  const [label, Icon] = statusLabel[status] ?? [status, CircleDashed]
+  return (
+    <span className={`tag status-${status}`}>
+      <Icon aria-hidden />
+      {label}
+    </span>
+  )
+}
+
+// ItemStatuses lists every item the ticket asks for with what the code shows,
+// so nothing the ticket asks for drops out unseen.
+function ItemStatuses({ items }: { items: ItemStatus[] }) {
+  return (
+    <div className="item-statuses">
+      {items.map((item, i) => (
+        <div key={i} className="item-status">
+          <StatusTag status={item.status} />
+          <span>
+            <Md text={item.item} />
+            {item.note && (
+              <span className="consequence">
+                <Md text={item.note} />
+              </span>
+            )}
+            {item.evidence && <span className="mono quiet small">{item.evidence}</span>}
+          </span>
         </div>
       ))}
     </div>
@@ -114,12 +209,30 @@ export function BriefCards({ brief }: { brief: Brief }) {
   let repo = ''
   return (
     <div className="stack">
-      <Card title="What this area does">
+      {brief.items && brief.items.length > 0 && (
+        <Card title="What the ticket asks for" icon={ListTodo}>
+          <ItemStatuses items={brief.items} />
+        </Card>
+      )}
+      {brief.claims && brief.claims.length > 0 && (
+        <Card title="Ticket claims the code contradicts" icon={TriangleAlert} tone="warn">
+          {brief.claims.map((c, i) => (
+            <div key={i} className="claim">
+              <div className="quiet">“{c.claim}”</div>
+              <div className="indent">
+                <Md text={c.finding} />
+              </div>
+              {c.evidence && <div className="indent mono quiet small">{c.evidence}</div>}
+            </div>
+          ))}
+        </Card>
+      )}
+      <Card title="What this area does" icon={Info}>
         <p>
           <Md text={brief.summary} />
         </p>
       </Card>
-      <Card title="How it flows today">
+      <Card title="How it flows today" icon={Workflow}>
         {brief.flow && brief.flow.length > 0 ? (
           <ol className="flow">
             {brief.flow.map((step, i) => (
@@ -132,7 +245,7 @@ export function BriefCards({ brief }: { brief: Brief }) {
           <div className="quiet italic">none</div>
         )}
       </Card>
-      <Card title="Key files">
+      <Card title="Key files" icon={FileCode}>
         {brief.parts && brief.parts.length > 0 ? (
           brief.parts.map((part, i) => {
             const head = part.repo !== repo
@@ -151,7 +264,7 @@ export function BriefCards({ brief }: { brief: Brief }) {
           <div className="quiet italic">none</div>
         )}
       </Card>
-      <Card title="Terms">
+      <Card title="Terms" icon={BookA}>
         {brief.terms && brief.terms.length > 0 ? (
           <ul className="bullets">
             {brief.terms.map((term, i) => (
@@ -167,11 +280,11 @@ export function BriefCards({ brief }: { brief: Brief }) {
           <div className="quiet italic">none</div>
         )}
       </Card>
-      <Card title="Gotchas">
+      <Card title="Gotchas" icon={Lightbulb}>
         <Bullets items={brief.gotchas} />
       </Card>
-      <Card title="Ask the team">
-        <Bullets items={brief.ask_team} marker="?" />
+      <Card title="Ask the team" icon={MessageCircleQuestion}>
+        <Bullets items={brief.ask_team} marker={<CircleHelp aria-hidden />} />
       </Card>
     </div>
   )

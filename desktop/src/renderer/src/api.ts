@@ -1,4 +1,4 @@
-import type { Found, Info, Issue, Job, JobKind, Repo, RepoStatus, Saved, SavedSet, Written } from './types'
+import type { Found, Info, Issue, Job, JobKind, Repo, RepoStatus, Saved, SavedSet, TicketContext, Written } from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -29,6 +29,7 @@ export const api = {
   hide: (k: string) => call<null>('PUT', `/api/hidden/${key(k)}`),
   unhide: (k: string) => call<null>('DELETE', `/api/hidden/${key(k)}`),
   saved: (k: string) => call<SavedSet>('GET', `/api/tickets/${key(k)}/saved`),
+  context: (k: string) => call<TicketContext>('GET', `/api/tickets/${key(k)}/context`),
   answers: (k: string, draftID: number, answers: Record<string, string>) =>
     call<Saved>('PUT', `/api/tickets/${key(k)}/answers`, { draft_id: draftID, answers }),
   reveal: (k: string) => call<{ path: string }>('POST', `/api/tickets/${key(k)}/reveal`),

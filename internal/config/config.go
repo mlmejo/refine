@@ -30,6 +30,15 @@ type Config struct {
 	Jira  Jira              `toml:"jira"`
 	Repos map[string]string `toml:"repos"`
 	Flags Flags             `toml:"flags"`
+	// Experiments switches A/B tests on; see docs/experiments.
+	Experiments Experiments `toml:"experiments"`
+}
+
+// Experiments are the A/B tests that can run. Each assigns tickets to arms.
+type Experiments struct {
+	// PlainNames tests plain names with a glossary against inline code in
+	// findings and questions (docs/experiments/plain-names.md).
+	PlainNames bool `toml:"plain_names"`
 }
 
 // TrackingEnv turns tracking on (1) or off (0) over the config's flag.

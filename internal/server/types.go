@@ -101,3 +101,27 @@ type repo struct {
 	Name string `json:"name"`
 	Dir  string `json:"dir"`
 }
+
+type comment struct {
+	Author string `json:"author"`
+	Body   string `json:"body"`
+}
+
+type link struct {
+	Relation string `json:"relation"`
+	Key      string `json:"key"`
+	Summary  string `json:"summary"`
+	Status   string `json:"status"`
+}
+
+// ticketContext is a ticket in full for the app to show as Jira has it.
+type ticketContext struct {
+	issue
+	Description string `json:"description"`
+	// DescriptionMD is the description with Jira's formatting as markdown.
+	DescriptionMD string    `json:"description_md"`
+	Comments      []comment `json:"comments"`
+	Links         []link    `json:"links"`
+	Parent        *issue    `json:"parent"`
+	Siblings      []issue   `json:"siblings"`
+}

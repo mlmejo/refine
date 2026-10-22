@@ -1,11 +1,14 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
+import { Check, Copy, FileCode, FolderOpen, Gauge, ListChecks, MessagesSquare, OctagonAlert, PenLine, Split, Stamp, Upload } from 'lucide-react'
 import { api } from '../api'
 import { useRefine } from '../store'
-import { plural, questions, stamped, tokens, unanswered, type Child, type Choice, type RepoFiles, type Saved, type StoryPointCriteria } from '../types'
+import { plural, questions, stamped, tokens, unanswered, type Anchor, type Child, type RepoFiles, type Saved, type StoryPointCriteria } from '../types'
 import { Bullets, Card, Relations } from './Cards'
-import { Md } from './Md'
+import { Md, TermsProvider } from './Md'
+import { TicketContext } from './TicketContext'
+import { ClearCard, DecisionDeck, DecisionSummary, decisions } from './DecisionDeck'
 
-type Ask = 'stamp' | 'write' | undefined
+type Ask = 'write' | undefined
 
 export function DraftView({ issueKey, busy }: { issueKey: string; busy: boolean }) {
   const refine = useRefine()
@@ -15,9 +18,15 @@ export function DraftView({ issueKey, busy }: { issueKey: string; busy: boolean 
   const [writing, setWriting] = useState(false)
   const [note, setNote] = useState<{ text: string; error?: boolean }>()
   const [openChild, setOpenChild] = useState<number>()
+  // panel is the ticket shown beside the deck, at an anchor's quote.
+  const [panel, setPanel] = useState<{ anchor: Anchor | null }>()
 
-  const total = questions(d).length
   const left = unanswered(saved)
+  const decisionCount = decisions(saved).length
+  // Findings no question rests on are background; with no evidence at all
+  // (drafts from before it), every finding is.
+  const cited = new Set((d.open_questions ?? []).flatMap((q) => q.evidence ?? []))
+  const background = (d.findings ?? []).filter((_, i) => !cited.has(i))
   const isStamped = stamped(saved)
   const legacy = !saved.step
 
@@ -27,9 +36,9 @@ export function DraftView({ issueKey, busy }: { issueKey: string; busy: boolean 
     if (left > 0) return fail(`answer ${plural(left, 'more question')} before redrafting`)
     void refine.nextRound(issueKey)
   }
-  const stamp = () => {
-    setNote(undefined)
-    if (left > 0) return setAsk('stamp')
+  // Stamping again needs the questions clear, as the first stamp did.
+  const stampAgain = () => {
+    if (questions(d).length > 0) return fail('Claude still has questions: run more questions until a round comes back with none')
     void refine.stamp(issueKey)
   }
   const askWrite = () => {
@@ -78,63 +87,55 @@ export function DraftView({ issueKey, busy }: { issueKey: string; busy: boolean 
     }
   }
 
+  // Arm B of the plain-names experiment shows plain names with the code on
+  // hover; arm A and drafts outside the experiment render as before.
+  const terms = d.arm === 'B' ? (d.terms ?? []) : []
   return (
-    <div className={openChild !== undefined && d.split?.[openChild] ? 'split' : ''}>
+    <TermsProvider
+      terms={terms}
+      onHover={(name) => refine.track('term_hover', issueKey, { arm: d.arm ?? '', term_chars: name.length })}
+    >
+    <div className={(openChild !== undefined && d.split?.[openChild]) || panel ? 'split' : ''}>
       <div className="stack">
         <Meta saved={saved} />
+        {isStamped && !legacy && <Confidence issueKey={issueKey} saved={saved} />}
 
         <div className="actions sticky">
-          {!isStamped && (
-            <>
-              <button disabled={busy} onClick={nextRound} title="Continue the session with your answers">
-                Next round with answers
-              </button>
-              {!legacy && (
-                <button className="primary" disabled={busy} onClick={stamp}>
-                  Stamp
-                </button>
-              )}
-            </>
+          {!isStamped && legacy && (
+            <button disabled={busy} onClick={nextRound} title="Continue the session with your answers">
+              Redraft with answers
+            </button>
           )}
           {isStamped && (
             <>
               <button className="primary" disabled={busy || writing} onClick={askWrite}>
+                <Upload aria-hidden />
                 {writing ? `Writing to ${issueKey}…` : 'Write to Jira'}
               </button>
               <button disabled={busy} onClick={nextRound}>
+                <MessagesSquare aria-hidden />
                 {legacy ? 'Redraft with answers' : 'More questions'}
               </button>
               {!legacy && (
-                <button disabled={busy} onClick={stamp}>
+                <button disabled={busy} onClick={stampAgain}>
+                  <Stamp aria-hidden />
                   Stamp again
                 </button>
               )}
             </>
           )}
-          <button onClick={() => refine.setTab(issueKey, 'approach')}>Redo approach</button>
-          {saved.markdown && <button onClick={() => void reveal()}>Markdown</button>}
+          <button onClick={() => refine.setTab(issueKey, 'approach')}>
+            <PenLine aria-hidden />
+            Redo approach
+          </button>
+          {saved.markdown && (
+            <button onClick={() => void reveal()}>
+              <FolderOpen aria-hidden />
+              Markdown
+            </button>
+          )}
         </div>
 
-        {ask === 'stamp' && (
-          <div className="confirm">
-            <p>
-              {plural(left, 'question')} still open. Stamp anyway? They stay in the draft as open, and you own
-              proceeding without them.
-            </p>
-            <div className="actions">
-              <button
-                className="primary"
-                onClick={() => {
-                  setAsk(undefined)
-                  void refine.stamp(issueKey)
-                }}
-              >
-                Stamp anyway
-              </button>
-              <button onClick={() => setAsk(undefined)}>Cancel</button>
-            </div>
-          </div>
-        )}
         {ask === 'write' && (
           <WriteConfirm
             saved={saved}
@@ -147,65 +148,42 @@ export function DraftView({ issueKey, busy }: { issueKey: string; busy: boolean 
         )}
         {note && <div className={`banner ${note.error ? 'error' : 'done'}`}>{note.text}</div>}
 
-        {d.problem && (
-          <Card title="Ticket">
-            <p>
-              <strong>Problem:</strong> <Md text={d.problem} />
-            </p>
-            <p>
-              <strong>Solution:</strong> <Md text={d.solution} />
-            </p>
-            <h4>Blockers</h4>
-            <Bullets items={d.ticket_blockers} marker="⛔" />
-          </Card>
-        )}
-        <Card title="Your approach">
-          {saved.approach.trim() ? <p className="prewrap">{saved.approach}</p> : <div className="quiet italic">you didn't know yet</div>}
-        </Card>
-        {((d.findings?.length ?? 0) > 0 || !isStamped) && (
-          <Card title={`Findings · ${d.findings?.length ?? 0}`}>
-            <Bullets items={d.findings} />
-          </Card>
-        )}
-        <Card title="Approach review">
-          <h4>Holds</h4>
-          <Bullets items={d.approach_review.holds} />
-          <h4>Unsure, answered</h4>
-          <Bullets items={d.approach_review.unsure} />
-          <h4>Not covered yet</h4>
-          <Bullets items={d.approach_review.misses} />
-          <h4>Alternatives</h4>
-          <Bullets items={d.approach_review.alternatives} />
-        </Card>
+        {!isStamped && !legacy && questions(d).length > 0 && <DecisionDeck issueKey={issueKey} saved={saved} busy={busy} onShowTicket={(anchor) => { setOpenChild(undefined); setPanel({ anchor }) }} />}
+        {!isStamped && !legacy && questions(d).length === 0 && <ClearCard issueKey={issueKey} saved={saved} busy={busy} />}
         {isStamped && (
           <>
-            <Card title={`Acceptance Criteria · ${d.acceptance_criteria?.length ?? 0}`}>
+            <Card title={`Acceptance Criteria · ${d.acceptance_criteria?.length ?? 0}`} icon={ListChecks}>
               <Bullets items={d.acceptance_criteria} marker="*" />
             </Card>
-            <Card title="Technical Implementation">
+            <Card title="Technical Implementation" icon={FileCode}>
               <Repos repos={d.technical_implementation} />
             </Card>
-            <Card title="Story Point Criteria">
+            <Card title="Story Point Criteria" icon={Gauge}>
               <Points spc={d.story_point_criteria} points={d.points} />
             </Card>
+            {decisionCount > 0 && (
+              <Fold issueKey={issueKey} title={`Your decisions · ${decisionCount}`}>
+                <DecisionSummary saved={saved} />
+              </Fold>
+            )}
           </>
         )}
-        <Card title="Deployment">
-          <p>
-            <strong>Platform:</strong> <Md text={d.deployment.platform} />
-          </p>
-          <h4>Evidence</h4>
-          <Bullets items={d.deployment.evidence} />
-          <h4>Steps</h4>
-          <Bullets items={d.deployment.steps} />
-          <h4>Blockers</h4>
-          {(d.deployment.blockers ?? []).length === 0 && <div className="quiet italic">none</div>}
-          {(d.deployment.blockers ?? []).map((q) => (
-            <Question key={q} issueKey={issueKey} saved={saved} choice={{ question: q, options: null, recommended: '', why: '' }} />
-          ))}
-        </Card>
+        {d.duplicates && d.duplicates.length > 0 && (
+          <Card title={`Already delivered by other tickets · ${d.duplicates.length}`} tone="warn" icon={Copy}>
+            {d.duplicates.map((dup, i) => (
+              <div key={i} className="dup">
+                <div className="error-text">
+                  {dup.ticket} · delivered by {dup.key}
+                </div>
+                <div className="indent">
+                  “<Md text={dup.criterion} />”, already “<Md text={dup.covered} />”
+                </div>
+              </div>
+            ))}
+          </Card>
+        )}
         {d.split && d.split.length > 0 && (
-          <Card title={`Split · ${plural(d.split.length, 'ticket')}`}>
+          <Card title={`Split · ${plural(d.split.length, 'ticket')}`} icon={Split}>
             {d.split.map((child, i) => {
               const created = saved.children?.[String(i)]
               return (
@@ -221,22 +199,36 @@ export function DraftView({ issueKey, busy }: { issueKey: string; busy: boolean 
             })}
           </Card>
         )}
-        {d.duplicates && d.duplicates.length > 0 && (
-          <Card title={`Already delivered by other tickets · ${d.duplicates.length}`} tone="warn">
-            {d.duplicates.map((dup, i) => (
-              <div key={i} className="dup">
-                <div className="error-text">
-                  {dup.ticket} · delivered by {dup.key}
-                </div>
-                <div className="indent">
-                  “<Md text={dup.criterion} />”, already “<Md text={dup.covered} />”
-                </div>
-              </div>
-            ))}
-          </Card>
+
+        <ApproachReview issueKey={issueKey} saved={saved} />
+        {background.length > 0 && (
+          <Fold issueKey={issueKey} title={`Background · ${plural(background.length, 'finding')}`}>
+            <Bullets items={background} />
+          </Fold>
         )}
+        {d.problem && (
+          <Fold issueKey={issueKey} title="Ticket">
+            <p>
+              <strong>Problem:</strong> <Md text={d.problem} />
+            </p>
+            <p>
+              <strong>Solution:</strong> <Md text={d.solution} />
+            </p>
+            <h4>Blockers</h4>
+            <Bullets items={d.ticket_blockers} marker={<OctagonAlert className="tone-err" aria-hidden />} />
+          </Fold>
+        )}
+        <Fold issueKey={issueKey} title="Deployment">
+          <p>
+            <strong>Platform:</strong> <Md text={d.deployment.platform} />
+          </p>
+          <h4>Evidence</h4>
+          <Bullets items={d.deployment.evidence} />
+          <h4>Steps</h4>
+          <Bullets items={d.deployment.steps} />
+        </Fold>
         {d.elsewhere && d.elsewhere.length > 0 && (
-          <Card title={`Left to other tickets · ${d.elsewhere.length}`}>
+          <Fold issueKey={issueKey} title={`Left to other tickets · ${d.elsewhere.length}`}>
             {d.elsewhere.map((item, i) => (
               <div key={i}>
                 <span className="key">{item.key}</span>
@@ -245,25 +237,67 @@ export function DraftView({ issueKey, busy }: { issueKey: string; busy: boolean 
                 </div>
               </div>
             ))}
-          </Card>
+          </Fold>
         )}
         {d.relations && d.relations.length > 0 && (
-          <Card title={`Related tickets · ${d.relations.length}`}>
+          <Fold issueKey={issueKey} title={`Related tickets · ${d.relations.length}`}>
             <Relations relations={d.relations} />
-          </Card>
+          </Fold>
         )}
-        <Card title={`Open questions · ${total - left}/${total} answered`}>
-          {(d.open_questions ?? []).length === 0 && <div className="quiet italic">none</div>}
-          {(d.open_questions ?? []).map((q) => (
-            <Question key={q.question} issueKey={issueKey} saved={saved} choice={q} />
-          ))}
-        </Card>
       </div>
+      {panel && !(openChild !== undefined && d.split?.[openChild]) && (
+        <div className="side">
+          <div className="side-head">
+            <strong>{issueKey} in Jira</strong>
+            <button className="link push" onClick={() => setPanel(undefined)}>
+              close
+            </button>
+          </div>
+          <TicketContext issueKey={issueKey} anchor={panel.anchor} />
+        </div>
+      )}
       {openChild !== undefined && d.split?.[openChild] && (
         <div className="side">
           <ChildCard child={d.split[openChild]} created={saved.children?.[String(openChild)]} onClose={() => setOpenChild(undefined)} />
         </div>
       )}
+    </div>
+    </TermsProvider>
+  )
+}
+
+// Confidence asks once per stamped draft how sure the developer is that the
+// ticket is right: a measure for the plain-names experiment.
+function Confidence({ issueKey, saved }: { issueKey: string; saved: Saved }) {
+  const refine = useRefine()
+  const storeKey = `confidence-${saved.id}`
+  const [value, setValue] = useState<number | null>(() => {
+    try {
+      const v = localStorage.getItem(storeKey)
+      return v ? Number(v) : null
+    } catch {
+      return null
+    }
+  })
+  if (!refine.info?.tracking) return null
+  const pick = (n: number) => {
+    setValue(n)
+    try {
+      localStorage.setItem(storeKey, String(n))
+    } catch {
+      // Asking again next time is fine.
+    }
+    refine.track('confidence', issueKey, { value: n, arm: saved.draft.arm ?? '', draft: saved.id })
+  }
+  return (
+    <div className="confidence">
+      <span>How sure are you this ticket is right?</span>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button key={n} className={value === n ? 'picked' : ''} onClick={() => pick(n)}>
+          {n}
+        </button>
+      ))}
+      <span className="quiet small">{value ? 'thanks' : '1 not sure · 5 sure'}</span>
     </div>
   )
 }
@@ -289,104 +323,60 @@ function Meta({ saved }: { saved: Saved }) {
   return <div className="quiet small">{parts.join(' · ')}</div>
 }
 
-// Question shows one question with its answer. A question with options is
-// answered by its radios, saved at once; any question can be answered in
-// words, saved when the box loses focus or on enter.
-function Question({ issueKey, saved, choice }: { issueKey: string; saved: Saved; choice: Choice }) {
+// Fold is a section folded away by default: context to open when needed,
+// not to read first.
+function Fold({ issueKey, title, children }: { issueKey: string; title: string; children: ReactNode }) {
   const refine = useRefine()
-  const text = choice.question
-  const options = choice.options ?? []
-  const answer = saved.answers?.[text] ?? ''
-  const own = answer.trim() !== '' && !options.includes(answer)
-  const [value, setValue] = useState(own ? answer : '')
-  const [editing, setEditing] = useState(false)
-  const [error, setError] = useState<string>()
-  const answered = answer.trim() !== ''
-
-  const save = async (next: string) => {
-    if (next === answer) return
-    try {
-      const updated = await api.answers(issueKey, saved.id, { ...(saved.answers ?? {}), [text]: next })
-      refine.setDraft(issueKey, updated)
-      setError(undefined)
-    } catch (err) {
-      setError(`could not save the answer: ${(err as Error).message}`)
-    }
-  }
-  const saveWords = () => {
-    setEditing(false)
-    void save(value.trim())
-  }
-
   return (
-    <div className={`question ${answered ? 'answered' : ''}`}>
-      <div className="q-text">
-        <span className="q-state">{answered ? '✓' : '○'}</span> <Md text={text} />
-      </div>
-      {options.length > 0 && (
-        <div className="q-options">
-          {options.map((option) => (
-            <label key={option} className="scope-option">
-              <input type="radio" name={`q-${saved.id}-${text}`} checked={answer === option} onChange={() => void save(option)} />
-              <span>
-                <Md text={option} />
-                {option === choice.recommended && (
-                  <span className="star">
-                    {' '}
-                    ★ recommended{choice.why ? ` · ${choice.why}` : ''}
-                  </span>
-                )}
-              </span>
-            </label>
-          ))}
-        </div>
-      )}
-      {editing ? (
-        <textarea
-          autoFocus
-          className="answer"
-          value={value}
-          placeholder={options.length > 0 ? 'Other answer' : 'Your answer, even just "no"'}
-          onChange={(e) => setValue(e.target.value)}
-          onBlur={saveWords}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              saveWords()
-            }
-            if (e.key === 'Escape') {
-              setValue(own ? answer : '')
-              setEditing(false)
-            }
+    <details
+      className="fold"
+      onToggle={(e) => {
+        if ((e.target as HTMLDetailsElement).open) refine.track('fold_open', issueKey, { section: title.split(' · ')[0] })
+      }}
+    >
+      <summary>{title}</summary>
+      <div className="fold-body">{children}</div>
+    </details>
+  )
+}
+
+// ApproachReview shows what needs attention in the developer's approach:
+// what it misses, what it was unsure of, and the alternatives. What holds is
+// folded to a count.
+function ApproachReview({ issueKey, saved }: { issueKey: string; saved: Saved }) {
+  const refine = useRefine()
+  const r = saved.draft.approach_review
+  const holds = r.holds ?? []
+  const parts: [string, string[] | null][] = [
+    ['Not covered yet', r.misses],
+    ['Unsure, answered', r.unsure],
+    ['Alternatives', r.alternatives]
+  ]
+  return (
+    <Card title="Your approach" icon={PenLine}>
+      {saved.approach.trim() ? <p className="prewrap">{saved.approach}</p> : <div className="quiet italic">you didn't know yet</div>}
+      {parts
+        .filter(([, items]) => (items ?? []).length > 0)
+        .map(([name, items]) => (
+          <div key={name}>
+            <h4>{name}</h4>
+            <Bullets items={items} />
+          </div>
+        ))}
+      {holds.length > 0 && (
+        <details
+          className="holds"
+          onToggle={(e) => {
+            if ((e.target as HTMLDetailsElement).open) refine.track('fold_open', issueKey, { section: 'Holds' })
           }}
-        />
-      ) : (
-        <button className="answer-view" onClick={() => setEditing(true)}>
-          {own ? (
-            <span className="italic">
-              ↳ <Md text={answer} />
-            </span>
-          ) : options.length > 0 ? (
-            <span className="quiet italic">↳ other answer…</span>
-          ) : answered ? null : saved.step === 'stamp' ? (
-            <span className="quiet italic">↳ still open: stamped without an answer</span>
-          ) : (
-            <span className="quiet italic">
-              ↳ needs an answer{choice.recommended ? ` · suggested: ${choice.recommended}` : ''}
-            </span>
-          )}
-        </button>
+        >
+          <summary>
+            <Check className="tone-ok" aria-hidden /> {plural(holds.length, 'part')} of your approach hold
+          </summary>
+          <Bullets items={holds} />
+        </details>
       )}
-      {options.length > 0 && !answered && saved.step === 'stamp' && (
-        <div className="quiet italic small">still open: stamped without an answer</div>
-      )}
-      {answered && (
-        <button className="link" onClick={() => void save('')}>
-          clear
-        </button>
-      )}
-      {error && <div className="error-text small">{error}</div>}
-    </div>
+    </Card>
   )
 }
 

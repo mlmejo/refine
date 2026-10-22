@@ -41,6 +41,9 @@ type Issue struct {
 type Ticket struct {
 	Issue
 	Description string
+	// DescriptionMarkdown is the description with its formatting, for
+	// showing; prompts use Description.
+	DescriptionMarkdown string
 	// Parent is the epic or parent ticket's key, empty when it has none.
 	Parent   string
 	Points   *float64
@@ -135,6 +138,12 @@ func AssignedJQL(sprint string) string {
 // OthersJQL lists the open tickets a refinement is compared with: the
 // current user's in the given sprints or any open sprint, and, when parent is
 // set, the rest of that epic, whoever has it.
+// FamilyJQL finds an epic or parent ticket and its children, the parent
+// first.
+func FamilyJQL(parent string) string {
+	return fmt.Sprintf(`key = %s OR parent = %s ORDER BY key ASC`, parent, parent)
+}
+
 func OthersJQL(parent string, sprints ...string) string {
 	quoted := make([]string, len(sprints))
 	for i, sprint := range sprints {
@@ -267,8 +276,9 @@ func (c *Client) GetTicket(ctx context.Context, key string) (Ticket, error) {
 			TechnicalImplementation: fieldText(raw.Fields.TechnicalImplementation),
 			StoryPointCriteria:      fieldText(raw.Fields.StoryPointCriteria),
 		},
-		Description: fieldText(raw.Fields.Description),
-		Points:      raw.Fields.Points,
+		Description:         fieldText(raw.Fields.Description),
+		DescriptionMarkdown: fieldMarkdown(raw.Fields.Description),
+		Points:              raw.Fields.Points,
 	}
 	if raw.Fields.Parent != nil {
 		ticket.Parent = raw.Fields.Parent.Key

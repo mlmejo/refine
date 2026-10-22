@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"slices"
@@ -118,6 +119,10 @@ func Open(ref, ui string) (*App, error) {
 			issues, err := client.Search(ctx, jql)
 			return home.Page{User: user, Issues: issues}, err
 		},
+		Ticket: client.GetTicket,
+		Family: func(ctx context.Context, parent string) ([]jira.Issue, error) {
+			return client.Search(ctx, jira.FamilyJQL(parent))
+		},
 		Get: func(ctx context.Context, key string) (jira.Issue, error) {
 			ticket, err := client.GetTicket(ctx, key)
 			return ticket.Issue, err
@@ -192,7 +197,18 @@ func Open(ref, ui string) (*App, error) {
 			if err != nil {
 				return draft.SavedBrief{}, err
 			}
-			result, err := run.Brief(ctx, draft.BriefPrompt(described))
+			// The brief checks the triage's items, so a ticket without a
+			// triage is triaged first.
+			triaged, ok, err := drafts.LatestTriage(issue.Key)
+			if err != nil {
+				return draft.SavedBrief{}, err
+			}
+			if !ok {
+				if triaged, err = triage(ctx, issue.Key); err != nil {
+					return draft.SavedBrief{}, fmt.Errorf("triage: %w", err)
+				}
+			}
+			result, err := run.Brief(ctx, draft.BriefPrompt(described, triaged.Triage.Items))
 			if err != nil {
 				return draft.SavedBrief{}, err
 			}
@@ -211,6 +227,7 @@ func Open(ref, ui string) (*App, error) {
 			if req.Resume && req.Previous != nil {
 				req.Scope = req.Previous.Scope
 			}
+			arm := experimentArm(cfg.Experiments, drafts, issue.Key, req.Previous)
 			var result draft.Result
 			var carried func(draft.Draft) draft.Draft
 			spentBefore := 0.0
@@ -220,6 +237,7 @@ func Open(ref, ui string) (*App, error) {
 				if err != nil {
 					return draft.Saved{}, err
 				}
+				run.Plain = arm == "B"
 				spentBefore = req.Previous.SessionCostUSD
 				if spentBefore == 0 {
 					spentBefore = req.Previous.CostUSD
@@ -228,13 +246,18 @@ func Open(ref, ui string) (*App, error) {
 				if err != nil {
 					return draft.Saved{}, err
 				}
-				previous := req.Previous.Draft
-				carried = func(d draft.Draft) draft.Draft { return draft.Carry(previous, d) }
+				previous := *req.Previous
+				carried = func(d draft.Draft) draft.Draft {
+					d = draft.Carry(previous.Draft, d)
+					d.Decided = draft.Decide(previous)
+					return d
+				}
 			default:
 				run, described, err := prepare(ctx, issue.Key)
 				if err != nil {
 					return draft.Saved{}, err
 				}
+				run.Plain = arm == "B"
 				// The questions build on the triage; a ticket without one is
 				// triaged first.
 				triaged := req.Triage
@@ -249,6 +272,13 @@ func Open(ref, ui string) (*App, error) {
 				carried = triaged.Triage.Apply
 				if req.Previous != nil {
 					given += draft.AnswersPrompt(*req.Previous)
+					decided := draft.Decide(*req.Previous)
+					apply := carried
+					carried = func(d draft.Draft) draft.Draft {
+						d = apply(d)
+						d.Decided = decided
+						return d
+					}
 				}
 				if req.Brief != nil && req.Brief.SessionID != "" && req.Brief.Ref == ref {
 					spentBefore = req.Brief.CostUSD
@@ -259,6 +289,12 @@ func Open(ref, ui string) (*App, error) {
 				if err != nil {
 					return draft.Saved{}, err
 				}
+			}
+			arms := carried
+			carried = func(d draft.Draft) draft.Draft {
+				d = arms(d)
+				d.Arm = arm
+				return d
 			}
 			saved := draft.Saved{
 				Key:       issue.Key,
@@ -375,6 +411,23 @@ func Open(ref, ui string) (*App, error) {
 	refiner = tracked(refiner, tracker, drafts.Latest)
 	source.Track = tracker.Event
 	return &App{Title: title, Site: cfg.Jira.Site, Source: source, Refiner: refiner, Drafts: drafts, Tracker: tracker}, nil
+}
+
+// experimentArm is the ticket's arm in the plain-names experiment: the arm
+// its drafts already have, a new one for a ticket refined for the first
+// time, and none for a ticket that was in progress before the experiment.
+func experimentArm(on config.Experiments, drafts *store.Store, key string, previous *draft.Saved) string {
+	if previous != nil {
+		return previous.Draft.Arm
+	}
+	if !on.PlainNames {
+		return ""
+	}
+	arm, err := drafts.Assign(key, "plain_names", func() bool { return rand.N(2) == 0 })
+	if err != nil {
+		return ""
+	}
+	return arm
 }
 
 // syncBranch is the branch whose checkout is compared with origin before

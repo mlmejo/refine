@@ -323,3 +323,37 @@ func TestScanThenAddRepos(t *testing.T) {
 		t.Fatalf("adding a plain folder: code %d", code)
 	}
 }
+
+func TestStampWaitsUntilQuestionsAreClear(t *testing.T) {
+	f := newFake()
+	f.drafts["GEEK-1"] = draft.Saved{ID: 8, Key: "GEEK-1", Step: draft.StepQuestions,
+		Draft: draft.Draft{OpenQuestions: []draft.Choice{{Question: "Rename?"}}}, Answers: map[string]string{"Rename?": "yes"}}
+	srv := f.server()
+	var failed map[string]string
+	if code := call(t, srv, "POST", "/api/jobs", `{"kind":"stamp","key":"GEEK-1"}`, &failed); code != http.StatusConflict {
+		t.Fatalf("stamp with questions: code %d, want 409", code)
+	}
+	if !strings.Contains(failed["error"], "next round") {
+		t.Errorf("error = %q", failed["error"])
+	}
+}
+
+func TestContextShowsTheTicketAndItsFamily(t *testing.T) {
+	f := newFake()
+	srv := f.server()
+	srv.Source.Ticket = func(_ context.Context, key string) (jira.Ticket, error) {
+		return jira.Ticket{Issue: jira.Issue{Key: key, Summary: "one"}, Description: "Add the missing events.", Parent: "GEEK-100",
+			Comments: []jira.Comment{{Author: "PO", Body: "Only the click event."}}}, nil
+	}
+	srv.Source.Family = func(_ context.Context, parent string) ([]jira.Issue, error) {
+		return []jira.Issue{{Key: "GEEK-100", Summary: "Design data points"}, {Key: "GEEK-1"}, {Key: "GEEK-2", Summary: "two"}}, nil
+	}
+	var got ticketContext
+	call(t, srv, "GET", "/api/tickets/GEEK-1/context", "", &got)
+	if got.Description != "Add the missing events." || len(got.Comments) != 1 || got.Comments[0].Body != "Only the click event." {
+		t.Errorf("ticket = %+v", got)
+	}
+	if got.Parent == nil || got.Parent.Summary != "Design data points" || len(got.Siblings) != 1 || got.Siblings[0].Key != "GEEK-2" {
+		t.Errorf("family: parent %+v siblings %+v", got.Parent, got.Siblings)
+	}
+}

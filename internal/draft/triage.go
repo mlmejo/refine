@@ -18,11 +18,22 @@ var triageSchema string
 // Triage is the first step: what the ticket is for and what stands in its
 // way, judged from Jira alone before anyone reads code.
 type Triage struct {
-	Problem        string          `json:"problem"`
-	Solution       string          `json:"solution"`
+	Problem  string `json:"problem"`
+	Solution string `json:"solution"`
+	// Items are the things the ticket asks for, one per deliverable, which
+	// the brief then checks against the code.
+	Items          []Item          `json:"items"`
 	Blockers       []string        `json:"blockers"`
 	ScopeQuestions []ScopeQuestion `json:"scope_questions"`
 	Relations      []Relation      `json:"relations"`
+}
+
+// Item is one thing the ticket asks for, with the ticket's own words for it
+// and the section they come from.
+type Item struct {
+	Item    string `json:"item"`
+	Quote   string `json:"quote"`
+	Section string `json:"section"`
 }
 
 // TriageResult is a finished triage with the run behind it.

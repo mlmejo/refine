@@ -17,6 +17,36 @@ type Choice struct {
 	Options     []string `json:"options"`
 	Recommended string   `json:"recommended"`
 	Why         string   `json:"why"`
+	// Consequences says what each option leads to, one line per option in
+	// the same order, written evenly so none reads as the preferred one.
+	Consequences []string `json:"consequences,omitempty"`
+	// Evidence are the indexes of the findings the question rests on. The
+	// app shows them with the question and the rest as background.
+	Evidence []int `json:"evidence,omitempty"`
+	// Anchor is the ticket text the decision serves, so the developer
+	// decides knowing what in the ticket it is for.
+	Anchor *Anchor `json:"anchor,omitempty"`
+	// Reopens is the index into Draft.Decided of the earlier decision this
+	// question reopens, when the code shows a risk in it; nil otherwise.
+	Reopens *int `json:"reopens,omitempty"`
+}
+
+// Anchor quotes the ticket: the words a decision serves and where they are.
+// Source "none" means the question is not in the ticket; Claude raised it
+// because the code shows the ticket cannot be built without it.
+type Anchor struct {
+	Quote  string `json:"quote"`
+	Source string `json:"source"`
+	Ref    string `json:"ref"`
+}
+
+// Reopened reports which earlier decision the question reopens, if any.
+// Claude writes -1 for none.
+func (c Choice) Reopened() (int, bool) {
+	if c.Reopens == nil || *c.Reopens < 0 {
+		return 0, false
+	}
+	return *c.Reopens, true
 }
 
 // UnmarshalJSON also reads a question saved as plain text, as drafts were
@@ -36,10 +66,11 @@ func (c *Choice) UnmarshalJSON(data []byte) error {
 // answers it with their approach, so the questions step does not ask it
 // again. Options is empty for an open question.
 type ScopeQuestion struct {
-	Question    string   `json:"question"`
-	Options     []string `json:"options"`
-	Recommended string   `json:"recommended"`
-	Why         string   `json:"why"`
+	Question     string   `json:"question"`
+	Options      []string `json:"options"`
+	Consequences []string `json:"consequences,omitempty"`
+	Recommended  string   `json:"recommended"`
+	Why          string   `json:"why"`
 }
 
 // legacyOption finds the "(a) " markers in a scope question written as one
@@ -90,7 +121,7 @@ func parseScopeLine(line string) ScopeQuestion {
 
 // String is the question on one line, as prompts give it.
 func (q ScopeQuestion) String() string {
-	return Choice(q).String()
+	return Choice{Question: q.Question, Options: q.Options, Consequences: q.Consequences, Recommended: q.Recommended, Why: q.Why}.String()
 }
 
 // String is the question on one line, as prompts and markdown give it.
@@ -98,7 +129,14 @@ func (q Choice) String() string {
 	var out strings.Builder
 	out.WriteString(q.Question)
 	if len(q.Options) > 0 {
-		out.WriteString(" Options: " + strings.Join(q.Options, "; ") + ".")
+		options := make([]string, len(q.Options))
+		for i, option := range q.Options {
+			options[i] = option
+			if i < len(q.Consequences) && q.Consequences[i] != "" {
+				options[i] += " (" + q.Consequences[i] + ")"
+			}
+		}
+		out.WriteString(" Options: " + strings.Join(options, "; ") + ".")
 	}
 	if q.Recommended != "" {
 		fmt.Fprintf(&out, " Recommended: %s", q.Recommended)

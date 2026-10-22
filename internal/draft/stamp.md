@@ -45,15 +45,16 @@ Example of the expected style (GEEK-11550):
 * `tests/Feature/DesignDataPoints/DesignDataPointsTest.php`
 
 ## Story Point Criteria
-- Rate five dimensions Low, Medium or High: novelty and complexity, risk and feature impact, dependency and integration complexity, testing and QA effort, deployment complexity; then a total.
-- Points: 3 at most. Mostly Low is 1 to 2, Medium is 3. Any High, or more than 2 repos, or CI or deploy files, means the ticket should be split; a 5 is only possible if the developer acknowledges the risk.
+- Rate five dimensions Low, Medium or High: novelty and complexity, risk and feature impact, dependency and integration complexity, testing and QA effort, deployment complexity.
+- Testing and QA effort is N/A when QA cannot verify the ticket from the product, as with the "No user-facing behaviour" criterion. No other dimension is ever N/A: a ticket with no deploy steps rates deployment Low.
+- Rate each dimension from the work alone. Refine works out the total and the points from your ratings; do not aim them at a number.
 
 ## Splitting
+- Split when the ticket holds more than one deliverable that could ship and be tested on its own. The ratings do not decide this: an average does not grow with the size of a ticket.
 - When the ticket should be split, this ticket becomes the parent and holds the technical foundation: migrations, models, controllers, package installs, shared wiring. Its Acceptance Criteria, Technical Implementation and points describe that foundation only.
 - Each child ticket is one behaviour a user can try, titled with the parent feature, a dash, then the behaviour, for example "Book Management - Adding Book" or "Book Management - Deleting Book".
-- A purely technical ticket of 3 points or less stands alone; it does not need behaviour children.
-- A child is usually 1 point and never more than 3. If a behaviour needs more, split it again.
-- Rate every child's Story Point Criteria on its own, the same way as the parent's, from the work that child adds on top of the parent. Its points follow from its ratings.
+- A purely technical ticket stands alone; it does not need behaviour children.
+- Rate every child's Story Point Criteria on its own, the same way as the parent's, from the work that child adds on top of the parent. Refine works out its points from its ratings.
 - Write each child's Acceptance Criteria as user stories: "As a <role>, I want <action>, so that <benefit>." Cover who must not be able to do it, for example "As a regular user, I cannot delete books, because I do not have enough privileges."
 - The stories are for QA, who check that the feature works, not what its numbers mean. The role is whoever uses the screen in the product (for example "an admin"), never a job title like "retention analyst". The action is something QA can do and see; the benefit is short and plain.
 - Leave metric definitions and figures out of the stories: no medians, percentiles, rates, buckets or formulas. A story says the figure is shown; whether it is computed right is verified by tests and code review.

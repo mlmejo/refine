@@ -99,7 +99,11 @@
           "question",
           "options",
           "recommended",
-          "why"
+          "why",
+          "evidence",
+          "consequences",
+          "reopens",
+          "anchor"
         ],
         "properties": {
           "question": {
@@ -121,6 +125,56 @@
           "why": {
             "type": "string",
             "description": "The reason, under 12 words."
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Indexes into findings (0-based) of the findings this question rests on; empty when none do."
+          },
+          "consequences": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "What this option leads to, in under 15 words, written evenly with the others."
+            },
+            "description": "One line per option, in the same order as options; empty when options is empty."
+          },
+          "reopens": {
+            "type": "integer",
+            "description": "Index into the earlier decisions this question reopens because the code shows a risk in it; -1 when it reopens none."
+          },
+          "anchor": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "quote",
+              "source",
+              "ref"
+            ],
+            "properties": {
+              "quote": {
+                "type": "string",
+                "description": "The ticket's own words this decision serves, verbatim, at most 25 words; empty when source is none."
+              },
+              "source": {
+                "enum": [
+                  "description",
+                  "criteria",
+                  "comment",
+                  "link",
+                  "epic",
+                  "none"
+                ],
+                "description": "Where the quote is; none when the ticket does not ask for this."
+              },
+              "ref": {
+                "type": "string",
+                "description": "The comment's author, or the linked or epic ticket's key; empty otherwise."
+              }
+            },
+            "description": "Where in the ticket this decision comes from."
           }
         }
       },

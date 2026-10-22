@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 )
@@ -17,6 +18,8 @@ type Runner struct {
 	Bin   string
 	Dir   string
 	Repos map[string]string
+	// Plain runs the questions step in arm B of the plain-names experiment.
+	Plain bool
 }
 
 // Result is a finished draft with the session it came from.
@@ -37,7 +40,16 @@ type Usage struct {
 }
 
 func (r Runner) args(prompt, session string) []string {
-	return r.command(prompt, session, questionRules, questionsSchema)
+	rules, schema := r.questions()
+	return r.command(prompt, session, rules, schema)
+}
+
+// questions are the questions step's rules and schema for the runner's arm.
+func (r Runner) questions() (string, string) {
+	if r.Plain {
+		return plainRules, plainSchema
+	}
+	return questionRules, questionsSchema
 }
 
 func (r Runner) command(prompt, session, system, shape string) []string {
@@ -73,7 +85,8 @@ func (r Runner) Resume(ctx context.Context, session, prompt string) (Result, err
 // FromBrief drafts in a fork of the brief's session, which already holds the
 // code it read, and leaves the brief's own session as it was.
 func (r Runner) FromBrief(ctx context.Context, session, prompt string) (Result, error) {
-	return r.draft(ctx, append(r.args(withRules(questionRules, prompt), session), "--fork-session"))
+	rules, _ := r.questions()
+	return r.draft(ctx, append(r.args(withRules(rules, prompt), session), "--fork-session"))
 }
 
 // withRules puts a step's rules in the prompt. A resumed session keeps the
@@ -111,7 +124,7 @@ func (r Runner) Stamp(ctx context.Context, session, prompt string) (Stamp, Run, 
 	var stamp Stamp
 	args := append(r.command(withRules(stampRules, prompt), session, stampRules, stampSchema), "--fork-session")
 	run, err := r.run(ctx, args, &stamp)
-	return stamp, run, err
+	return stamp.Scored(), run, err
 }
 
 func (r Runner) draft(ctx context.Context, args []string) (Result, error) {
@@ -128,12 +141,24 @@ type Run struct {
 	Usage     Usage
 }
 
+// Model is the model every run uses, pinned so a draft does not change with
+// the developer's Claude Code default.
+const Model = "claude-opus-5-5"
+
+// isolation keeps the developer's own Claude Code setup out of refine's
+// runs: user settings bring their hooks and plugins (a style hook would
+// rewrite every draft). Project and local settings, the repos' CLAUDE.md and
+// AGENTS.md, stay: they are knowledge about the code. The user's global
+// CLAUDE.md still loads, as only --bare drops it and --bare cannot use a
+// Claude plan login.
+var isolation = []string{"--model", Model, "--setting-sources", "project,local"}
+
 func (r Runner) run(ctx context.Context, args []string, into any) (Run, error) {
 	bin := r.Bin
 	if bin == "" {
 		bin = "claude"
 	}
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd := exec.CommandContext(ctx, bin, append(slices.Clone(args), isolation...)...)
 	cmd.Dir = r.Dir
 	// Load each repo's CLAUDE.md, which --add-dir skips by default: it says
 	// what the repo is, such as a rewrite whose original is the spec.

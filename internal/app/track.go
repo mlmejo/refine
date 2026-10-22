@@ -49,11 +49,14 @@ func tracked(r home.Refiner, t *track.Tracker, latest func(string) (draft.Saved,
 	}
 	questions := r.Draft
 	r.Draft = func(ctx context.Context, issue jira.Issue, req draft.Request) (draft.Saved, error) {
-		if !req.Resume && req.Triage != nil {
-			t.Event("scope", issue.Key, scopeProps(req.Triage.Triage.ScopeQuestions, req.Scope))
-		}
 		started := time.Now()
 		saved, err := questions(ctx, issue, req)
+		// The arm is known once the run has assigned it.
+		if !req.Resume && req.Triage != nil {
+			props := scopeProps(req.Triage.Triage.ScopeQuestions, req.Scope)
+			props["arm"] = saved.Draft.Arm
+			t.Event("scope", issue.Key, props)
+		}
 		props := map[string]any{
 			"resume":         req.Resume,
 			"from_brief":     req.Brief != nil && !req.Resume,
@@ -65,6 +68,11 @@ func tracked(r home.Refiner, t *track.Tracker, latest func(string) (draft.Saved,
 			props["findings"], props["questions"], props["blockers"] = len(d.Findings), len(d.OpenQuestions), len(d.Deployment.Blockers)
 			props["with_options"] = countWhere(d.OpenQuestions, func(c draft.Choice) bool { return len(c.Options) > 0 })
 			props["finding_chars"] = totalChars(d.Findings)
+			props["arm"], props["terms"] = d.Arm, len(d.Terms)
+			// The primary metric of the plain-names experiment: earlier
+			// decisions this round reopens, out of those made so far.
+			props["decided_before"] = len(d.Decided)
+			props["reopened"] = countWhere(d.OpenQuestions, func(c draft.Choice) bool { _, ok := c.Reopened(); return ok })
 		}
 		run("questions", issue.Key, started, props, saved.CostUSD, saved.Turns, err)
 		return saved, err
@@ -73,7 +81,7 @@ func tracked(r home.Refiner, t *track.Tracker, latest func(string) (draft.Saved,
 	r.Stamp = func(ctx context.Context, issue jira.Issue, prev draft.Saved) (draft.Saved, error) {
 		started := time.Now()
 		saved, err := stamp(ctx, issue, prev)
-		props := map[string]any{"open_questions": prev.Unanswered()}
+		props := map[string]any{"open_questions": prev.Unanswered(), "arm": prev.Draft.Arm, "decisions": len(draft.Decide(prev))}
 		if err == nil {
 			d := saved.Draft
 			props["criteria"], props["points"], props["split"] = len(d.AcceptanceCriteria), d.Points, len(d.Split)
@@ -144,10 +152,13 @@ func answerProps(saved draft.Saved, before map[string]string) []map[string]any {
 		if answer == strings.TrimSpace(before[c.Question]) {
 			return
 		}
-		props := map[string]any{"kind": kind, "index": index, "options": len(c.Options), "step": saved.Step}
+		props := map[string]any{"kind": kind, "index": index, "options": len(c.Options), "step": saved.Step, "arm": saved.Draft.Arm}
+		note, unknown := draft.IsUnknown(answer)
 		switch {
 		case answer == "":
 			props["cleared"] = true
+		case unknown:
+			props["unknown"], props["chars"] = true, len(note)
 		case len(c.Options) > 0 && slices.Contains(c.Options, answer):
 			props["picked"] = slices.Index(c.Options, answer)
 			props["agreed"] = answer == c.Recommended

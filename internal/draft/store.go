@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 	"time"
 )
 
@@ -61,7 +60,7 @@ func (d Draft) Questions() []string {
 func (s Saved) Unanswered() int {
 	count := 0
 	for _, question := range s.Draft.Questions() {
-		if strings.TrimSpace(s.Answers[question]) == "" {
+		if !decided(s.Answers[question]) {
 			count++
 		}
 	}
