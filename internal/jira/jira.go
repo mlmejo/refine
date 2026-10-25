@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Field ids of the three refinement fields.
@@ -332,6 +333,36 @@ func (c *Client) Update(ctx context.Context, key string, r Refinement) error {
 		return err
 	}
 	return c.do(ctx, http.MethodPut, "/rest/api/2/issue/"+url.PathEscape(key), body, nil)
+}
+
+// Comment adds a comment to a ticket. Through v2 the body is wiki markup.
+func (c *Client) Comment(ctx context.Context, key, body string) error {
+	data, err := json.Marshal(map[string]string{"body": body})
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPost, "/rest/api/2/issue/"+url.PathEscape(key)+"/comment", data, nil)
+}
+
+// HasComment reports whether the ticket has a comment saying body. Comments
+// come back as plain text, so only their letters and digits are compared.
+func (t Ticket) HasComment(body string) bool {
+	want := alnum(body)
+	for _, comment := range t.Comments {
+		if alnum(comment.Body) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func alnum(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, s)
 }
 
 // MoveToSprint moves a ticket to the sprint with the given name, on the board

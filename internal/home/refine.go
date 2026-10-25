@@ -38,6 +38,8 @@ type Refiner struct {
 	// Write puts the draft in the ticket's refinement fields and returns the
 	// ticket as Jira now has it.
 	Write func(ctx context.Context, key string, d draft.Draft) (jira.Issue, error)
+	// Comment adds the draft's blockers to the ticket as a comment, once.
+	Comment func(ctx context.Context, saved draft.Saved) error
 	// Split creates the draft's split tickets that saved.Children does not
 	// have yet, keeping each key as it goes. It returns the keys of every
 	// split ticket created so far, by index into Draft.Split, even when it

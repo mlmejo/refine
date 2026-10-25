@@ -480,3 +480,36 @@ func TestFieldMarkdownKeepsFormatting(t *testing.T) {
 		t.Errorf("string field = %q", got)
 	}
 }
+
+func TestCommentPostsWikiThroughV2(t *testing.T) {
+	var path, body string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.Method + " " + r.URL.Path
+		var in struct {
+			Body string `json:"body"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		body = in.Body
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	c := New(server.URL, "me@example.com", "token")
+	if err := c.Comment(context.Background(), "GEEK-1", "* {{a}}"); err != nil {
+		t.Fatal(err)
+	}
+	if path != "POST /rest/api/2/issue/GEEK-1/comment" || body != "* {{a}}" {
+		t.Fatalf("sent %s %q", path, body)
+	}
+}
+
+func TestHasCommentIgnoresMarkup(t *testing.T) {
+	// The wiki comment as written, and as Jira reads it back from ADF.
+	ticket := Ticket{Comments: []Comment{{Body: "Blockers found.\n\nDeploy\n* Who sets KEY?\n  * Answer: Ops"}}}
+	if !ticket.HasComment("Blockers found.\n\n*Deploy*\n* Who sets {{KEY}}?\n** Answer: Ops\n") {
+		t.Fatal("same comment not found")
+	}
+	if ticket.HasComment("Blockers found.\n\n*Deploy*\n* Who sets {{KEY}}?\n** Still open\n") {
+		t.Fatal("changed comment found")
+	}
+}

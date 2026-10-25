@@ -31,6 +31,7 @@ type fake struct {
 	req     draft.Request
 	written []string
 	moved   []string
+	comment error
 	split   error
 	block   chan struct{}
 	repos   map[string]string
@@ -94,6 +95,7 @@ func (f *fake) server() *Server {
 			f.written = append(f.written, key)
 			return jira.Issue{Key: key, AcceptanceCriteria: "done"}, nil
 		},
+		Comment: func(context.Context, draft.Saved) error { return f.comment },
 		Split: func(_ context.Context, saved draft.Saved) (map[int]string, error) {
 			return map[int]string{0: "GEEK-3"}, f.split
 		},
@@ -262,10 +264,11 @@ func TestWriteNeedsStamp(t *testing.T) {
 }
 
 type written struct {
-	Issue      issue          `json:"issue"`
-	Children   map[int]string `json:"children"`
-	SplitError string         `json:"split_error"`
-	Moved      bool           `json:"moved"`
+	Issue        issue          `json:"issue"`
+	Children     map[int]string `json:"children"`
+	CommentError string         `json:"comment_error"`
+	SplitError   string         `json:"split_error"`
+	Moved        bool           `json:"moved"`
 }
 
 func TestWriteSplitsAndMoves(t *testing.T) {
@@ -295,6 +298,19 @@ func TestWriteStopsBeforeMoveWhenSplitFails(t *testing.T) {
 	call(t, srv, "POST", "/api/tickets/GEEK-1/write", `{"draft_id":7}`, &out)
 	if out.SplitError != "jira down" || out.Moved || len(f.moved) != 0 {
 		t.Fatalf("out = %+v, moved %v", out, f.moved)
+	}
+}
+
+func TestWriteMovesWhenCommentFails(t *testing.T) {
+	f := newFake()
+	f.comment = errors.New("jira down")
+	f.drafts["GEEK-1"] = draft.Saved{ID: 7, Key: "GEEK-1", Step: draft.StepStamp}
+	srv := f.server()
+
+	var out written
+	call(t, srv, "POST", "/api/tickets/GEEK-1/write", `{"draft_id":7}`, &out)
+	if out.CommentError != "jira down" || !out.Moved {
+		t.Fatalf("out = %+v", out)
 	}
 }
 

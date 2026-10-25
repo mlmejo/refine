@@ -237,6 +237,7 @@ export type Found = { name: string; dir: string; listed?: string }
 export type Written = {
   issue: Issue
   children?: Record<string, string>
+  comment_error?: string
   split_error?: string
   move_error?: string
   moved: boolean

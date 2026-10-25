@@ -60,7 +60,9 @@ export function DraftView({ issueKey, busy }: { issueKey: string; busy: boolean 
         .sort(([a], [b]) => Number(a) - Number(b))
         .map(([, k]) => k)
       if (keys.length) written += `, split into ${keys.join(', ')}`
-      if (out.split_error) {
+      if (out.comment_error) {
+        fail(`${written}, but could not comment its blockers; write again tries the comment again: ${out.comment_error}`)
+      } else if (out.split_error) {
         fail(`${written}, but could not create every split ticket, so it stays here; write again creates the rest: ${out.split_error}`)
       } else if (out.move_error) {
         fail(`${written}, but could not move it to ${refine.info?.ready_sprint}: ${out.move_error}`)
@@ -383,6 +385,7 @@ function ApproachReview({ issueKey, saved }: { issueKey: string; saved: Saved })
 function WriteConfirm({ saved, onYes, onNo }: { saved: Saved; onYes: () => void; onNo: () => void }) {
   const d = saved.draft
   const splitLeft = (d.split ?? []).filter((_, i) => !saved.children?.[String(i)]).length
+  const blockers = (d.ticket_blockers?.length ?? 0) + (d.deployment.blockers?.length ?? 0)
   let warning: string | undefined
   if (!d.checked) warning = 'Not checked against other open tickets.'
   else if (d.duplicates?.length === 1) warning = '1 criterion is already delivered by another ticket.'
@@ -393,6 +396,7 @@ function WriteConfirm({ saved, onYes, onNo }: { saved: Saved; onYes: () => void;
       {warning && <p className="error-text">{warning}</p>}
       <p>
         Replace {saved.key}'s Acceptance Criteria, Technical Implementation, Story Point Criteria and points ({d.points})
+        {blockers > 0 && `, comment its ${plural(blockers, 'blocker')}`}
         {splitLeft > 0 && `, create ${plural(splitLeft, 'split ticket')}`}, then move it to the ready sprint?
       </p>
       <div className="actions">

@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -33,6 +34,45 @@ func (d Draft) Refinement() jira.Refinement {
 // from a draft made before children were rated has no Story Point Criteria.
 func (c Child) Refinement() jira.Refinement {
 	return refinement(c.AcceptanceCriteria, c.TechnicalImplementation, c.StoryPointCriteria, c.Points)
+}
+
+// BlockersComment is the draft's blockers as a Jira comment in wiki markup:
+// what the ticket waits on, then each deploy blocker with its answer. It is
+// "" when there are none.
+func (s Saved) BlockersComment() string {
+	d := s.Draft
+	if len(d.TicketBlockers) == 0 && len(d.Deployment.Blockers) == 0 {
+		return ""
+	}
+	var out strings.Builder
+	out.WriteString("Blockers found while refining this ticket.\n")
+	if len(d.TicketBlockers) > 0 {
+		out.WriteString("\n*Waits on*\n")
+		for _, blocker := range d.TicketBlockers {
+			out.WriteString("* " + wiki(blocker) + "\n")
+		}
+	}
+	if len(d.Deployment.Blockers) > 0 {
+		out.WriteString("\n*Deploy*\n")
+		for _, blocker := range d.Deployment.Blockers {
+			out.WriteString("* " + wiki(blocker) + "\n")
+			if answer := wiki(s.Answers[blocker]); answer != "" {
+				out.WriteString("** Answer: " + answer + "\n")
+			} else {
+				out.WriteString("** Still open\n")
+			}
+		}
+	}
+	return out.String()
+}
+
+var backticked = regexp.MustCompile("`([^`]+)`")
+
+// wiki puts one line of Claude's text in Jira wiki markup: `code` becomes
+// {{code}}, and line breaks become spaces so a list item stays one item.
+func wiki(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	return backticked.ReplaceAllString(text, "{{$1}}")
 }
 
 // Rated reports whether Claude rated these criteria.

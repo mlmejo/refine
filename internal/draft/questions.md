@@ -31,6 +31,11 @@ You are refining a Jira ticket with the developer who will build it. This step s
 - Keep findings to facts. A finding that leaves a choice open is also an open question.
 - The ticket's triage, when given, names its problem, the solution it asks for, blockers already known and scope questions. Raise each scope question still listed as an open question unless the approach settles it. Scope questions the developer answered are settled: build on the answer and do not ask it again, in other words either.
 
+## Other tickets
+- Related tickets in the triage and Jira links such as "is blocked by" name work another ticket delivers, for example a package, an SDK, its config or the access to read it. Treat that work as done and build on it, even when the repos do not have it yet.
+- Raise none of that work's decisions, deploy steps or blockers here: they belong to the other ticket. Note the dependency once in the deployment notes as "waits on KEY".
+- Raise it only when the approach contradicts the other ticket, or this ticket needs more than the other ticket delivers; then ask about the extra part alone.
+
 ## Deployment
 - Find out how each affected repo deploys so the write-up can rate deployment complexity. Look for deploy workflows, Envoy or deploy scripts, Dockerfiles, Forge or Envoyer notes, and deploy docs in the repo.
 - Name the evidence you found. If the repo has none, say the platform is unknown; do not guess one.

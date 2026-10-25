@@ -365,6 +365,18 @@ func Open(ref, ui string) (*App, error) {
 			ticket, err := client.GetTicket(ctx, key)
 			return ticket.Issue, err
 		},
+		Comment: func(ctx context.Context, saved draft.Saved) error {
+			body := saved.BlockersComment()
+			if body == "" {
+				return nil
+			}
+			// A write that is tried again leaves the comment it made already.
+			ticket, err := client.GetTicket(ctx, saved.Key)
+			if err != nil || ticket.HasComment(body) {
+				return err
+			}
+			return client.Comment(ctx, saved.Key, body)
+		},
 		Split: func(ctx context.Context, saved draft.Saved) (map[int]string, error) {
 			target, err := client.Split(ctx, saved.Key, cfg.Jira.ReadySprint)
 			if err != nil {

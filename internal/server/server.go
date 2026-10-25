@@ -355,9 +355,10 @@ func (s *Server) reveal(w http.ResponseWriter, r *http.Request) {
 	reply(w, map[string]string{"path": saved.Markdown})
 }
 
-// write puts the stamped draft in the ticket, creates its split tickets, and
-// moves it to the ready sprint, as the TUI's w does. A split or move that
-// fails after the write comes back as split_error or move_error.
+// write puts the stamped draft in the ticket, comments its blockers, creates
+// its split tickets, and moves it to the ready sprint. A comment, split or
+// move that fails after the write comes back as comment_error, split_error or
+// move_error; a failed comment does not stop the split or move.
 func (s *Server) write(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		DraftID int64 `json:"draft_id"`
@@ -388,12 +389,16 @@ func (s *Server) write(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := struct {
-		Issue      issue          `json:"issue"`
-		Children   map[int]string `json:"children,omitempty"`
-		SplitError string         `json:"split_error,omitempty"`
-		MoveError  string         `json:"move_error,omitempty"`
-		Moved      bool           `json:"moved"`
+		Issue        issue          `json:"issue"`
+		Children     map[int]string `json:"children,omitempty"`
+		CommentError string         `json:"comment_error,omitempty"`
+		SplitError   string         `json:"split_error,omitempty"`
+		MoveError    string         `json:"move_error,omitempty"`
+		Moved        bool           `json:"moved"`
 	}{Issue: toIssue(written), Children: saved.Children}
+	if s.Refiner.Comment != nil {
+		out.CommentError = errText(s.Refiner.Comment(ctx, saved))
+	}
 	if s.Refiner.Split != nil && len(saved.Draft.Split) > 0 {
 		var splitErr error
 		out.Children, splitErr = s.Refiner.Split(ctx, saved)

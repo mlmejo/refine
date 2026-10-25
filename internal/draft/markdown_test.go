@@ -183,3 +183,26 @@ func TestMarkdownFollowsTheSteps(t *testing.T) {
 		t.Errorf("stamped markdown:\n%s", got)
 	}
 }
+
+func TestBlockersComment(t *testing.T) {
+	if got := (Saved{}).BlockersComment(); got != "" {
+		t.Fatalf("no blockers: %q", got)
+	}
+	saved := Saved{
+		Draft: Draft{
+			TicketBlockers: []string{"GEEK-5 ships the `badges` table."},
+			Deployment: Deployment{Blockers: []string{
+				"Who sets `STARVAULT_KEY` on prod?\nAsk: ops",
+				"Does CI read the private package?",
+			}},
+		},
+		Answers: map[string]string{"Who sets `STARVAULT_KEY` on prod?\nAsk: ops": "Ops, before the sprint."},
+	}
+	want := "Blockers found while refining this ticket.\n" +
+		"\n*Waits on*\n* GEEK-5 ships the {{badges}} table.\n" +
+		"\n*Deploy*\n* Who sets {{STARVAULT_KEY}} on prod? Ask: ops\n** Answer: Ops, before the sprint.\n" +
+		"* Does CI read the private package?\n** Still open\n"
+	if got := saved.BlockersComment(); got != want {
+		t.Fatalf("comment =\n%s\nwant\n%s", got, want)
+	}
+}
