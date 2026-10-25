@@ -1,44 +1,52 @@
-// Package store keeps every draft of every ticket in SQLite, each mapped to
-// the markdown file written for it.
+// Package store keeps refinements and the repos' deployment profiles in
+// SQLite.
 package store
 
 import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/mlmejo/refine/internal/draft"
+	"github.com/mlmejo/refine/internal/refine"
 )
 
+// version is the schema this package writes. Version 11 replaced the old
+// triage, brief and draft tables with refinements.
+const version = 11
+
 const schema = `
-CREATE TABLE drafts (
-	id         INTEGER PRIMARY KEY,
-	key        TEXT NOT NULL,
-	summary    TEXT NOT NULL,
-	approach   TEXT NOT NULL,
-	ref        TEXT NOT NULL,
-	session_id TEXT NOT NULL,
-	cost_usd   REAL NOT NULL,
-	created    TEXT NOT NULL,
-	draft      TEXT NOT NULL,
-	markdown   TEXT NOT NULL
+CREATE TABLE refinements (
+	key     TEXT PRIMARY KEY,
+	state   TEXT NOT NULL,
+	updated TEXT NOT NULL
 );
-CREATE INDEX drafts_key ON drafts (key, id);
+CREATE TABLE deploy_profiles (
+	repo    TEXT PRIMARY KEY,
+	profile TEXT NOT NULL,
+	updated TEXT NOT NULL
+);
 `
 
-// Store is the draft history, with markdown written under Exports.
+// old are the tables the process before version 11 kept.
+var old = []string{"drafts", "briefs", "triages", "outlines", "events", "experiments"}
+
+// Store is refine's database.
 type Store struct {
-	db      *sql.DB
-	Exports string
+	db *sql.DB
+	// Backup is the copy of the database made before an upgrade dropped the
+	// old tables, or "" when there was none.
+	Backup string
 }
 
-// Open opens or creates the database at path.
-func Open(path, exports string) (*Store, error) {
+// Open opens or creates the database at path. A database from before
+// version 11 is copied next to it first, then its old tables are dropped.
+func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
@@ -46,8 +54,8 @@ func Open(path, exports string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{db: db, Exports: exports}
-	if err := s.migrate(); err != nil {
+	s := &Store{db: db}
+	if err := s.migrate(path); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -59,453 +67,135 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func (s *Store) migrate() error {
-	var version int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+func (s *Store) migrate(path string) error {
+	var current int
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&current); err != nil {
 		return err
 	}
-	if version < 1 {
-		if _, err := s.db.Exec(schema); err != nil {
-			return err
+	if current >= version {
+		return nil
+	}
+	if current > 0 {
+		backup := fmt.Sprintf("%s.bak-%s", path, time.Now().Format("20060102-150405"))
+		if _, err := s.db.Exec(`VACUUM INTO ?`, backup); err != nil {
+			return fmt.Errorf("back up %s before upgrading it: %w", path, err)
 		}
+		s.Backup = backup
 	}
-	if version < 2 {
-		for _, column := range []string{
-			`answers TEXT NOT NULL DEFAULT '{}'`,
-			`session_cost_usd REAL NOT NULL DEFAULT 0`,
-		} {
-			if _, err := s.db.Exec(`ALTER TABLE drafts ADD COLUMN ` + column); err != nil {
-				return err
-			}
-		}
-	}
-	if version < 3 {
-		if _, err := s.db.Exec(`
-			ALTER TABLE drafts ADD COLUMN turns INTEGER NOT NULL DEFAULT 0;
-			ALTER TABLE drafts ADD COLUMN usage TEXT NOT NULL DEFAULT '{}';
-			CREATE TABLE outlines (
-				repo       TEXT NOT NULL,
-				commit_sha TEXT NOT NULL,
-				outline    TEXT NOT NULL,
-				created    TEXT NOT NULL,
-				PRIMARY KEY (repo, commit_sha)
-			);`); err != nil {
-			return err
-		}
-	}
-	if version < 4 {
-		if _, err := s.db.Exec(`
-			CREATE TABLE briefs (
-				id         INTEGER PRIMARY KEY,
-				key        TEXT NOT NULL,
-				ref        TEXT NOT NULL,
-				session_id TEXT NOT NULL,
-				cost_usd   REAL NOT NULL,
-				turns      INTEGER NOT NULL,
-				usage      TEXT NOT NULL,
-				created    TEXT NOT NULL,
-				brief      TEXT NOT NULL
-			);
-			CREATE INDEX briefs_key ON briefs (key, id);`); err != nil {
-			return err
-		}
-	}
-	if version < 5 {
-		if _, err := s.db.Exec(`ALTER TABLE drafts ADD COLUMN children TEXT NOT NULL DEFAULT '{}'`); err != nil {
-			return err
-		}
-	}
-	if version < 6 {
-		if _, err := s.db.Exec(`
-			ALTER TABLE drafts ADD COLUMN step TEXT NOT NULL DEFAULT '';
-			CREATE TABLE triages (
-				id         INTEGER PRIMARY KEY,
-				key        TEXT NOT NULL,
-				session_id TEXT NOT NULL,
-				cost_usd   REAL NOT NULL,
-				turns      INTEGER NOT NULL,
-				usage      TEXT NOT NULL,
-				created    TEXT NOT NULL,
-				triage     TEXT NOT NULL
-			);
-			CREATE INDEX triages_key ON triages (key, id);`); err != nil {
-			return err
-		}
-	}
-	if version < 7 {
-		if _, err := s.db.Exec(`ALTER TABLE drafts ADD COLUMN scope TEXT NOT NULL DEFAULT '{}'`); err != nil {
-			return err
-		}
-	}
-	if version < 8 {
-		if _, err := s.db.Exec(`
-			CREATE TABLE events (
-				id      INTEGER PRIMARY KEY,
-				at      TEXT NOT NULL,
-				ui      TEXT NOT NULL,
-				session TEXT NOT NULL,
-				name    TEXT NOT NULL,
-				key     TEXT NOT NULL,
-				props   TEXT NOT NULL
-			);
-			CREATE INDEX events_at ON events (at);`); err != nil {
-			return err
-		}
-	}
-	if version < 9 {
-		if _, err := s.db.Exec(`
-			CREATE TABLE experiments (
-				key      TEXT NOT NULL,
-				name     TEXT NOT NULL,
-				arm      TEXT NOT NULL,
-				assigned TEXT NOT NULL,
-				PRIMARY KEY (key, name)
-			);`); err != nil {
-			return err
-		}
-	}
-	if version < 10 {
-		if _, err := s.db.Exec(`
-			ALTER TABLE events ADD COLUMN build TEXT NOT NULL DEFAULT '';
-			ALTER TABLE events ADD COLUMN prompts TEXT NOT NULL DEFAULT '';`); err != nil {
-			return err
-		}
-	}
-	_, err := s.db.Exec("PRAGMA user_version = 10")
-	return err
-}
-
-// Add writes the draft's markdown to Exports/<KEY>/<created>.md and records
-// both, returning the draft with its ID and markdown path set.
-func (s *Store) Add(saved draft.Saved, summary string) (draft.Saved, error) {
-	if saved.Created.IsZero() {
-		saved.Created = time.Now()
-	}
-	saved.Markdown = filepath.Join(s.Exports, filepath.Base(saved.Key), saved.Created.Local().Format("20060102-150405")+".md")
-	if err := draft.WriteMarkdown(saved.Markdown, saved, summary); err != nil {
-		return draft.Saved{}, err
-	}
-
-	data, err := json.Marshal(saved.Draft)
-	if err != nil {
-		return draft.Saved{}, err
-	}
-	answers, err := json.Marshal(saved.Answers)
-	if err != nil {
-		return draft.Saved{}, err
-	}
-	usage, err := json.Marshal(saved.Usage)
-	if err != nil {
-		return draft.Saved{}, err
-	}
-	scope, err := json.Marshal(saved.Scope)
-	if err != nil {
-		return draft.Saved{}, err
-	}
-	result, err := s.db.Exec(
-		`INSERT INTO drafts (key, summary, approach, ref, step, session_id, cost_usd, session_cost_usd, turns, usage, created, draft, markdown, answers, scope)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		saved.Key, summary, saved.Approach, saved.Ref, saved.Step, saved.SessionID, saved.CostUSD, saved.SessionCostUSD, saved.Turns, string(usage),
-		saved.Created.UTC().Format(time.RFC3339Nano), string(data), saved.Markdown, string(answers), string(scope),
-	)
-	if err != nil {
-		return draft.Saved{}, err
-	}
-	saved.ID, err = result.LastInsertId()
-	return saved, err
-}
-
-// SaveAnswers records the draft's answers and rewrites its markdown with them.
-func (s *Store) SaveAnswers(saved draft.Saved) error {
-	answers, err := json.Marshal(saved.Answers)
-	if err != nil {
-		return err
-	}
-	var summary string
-	if err := s.db.QueryRow(`SELECT summary FROM drafts WHERE id = ?`, saved.ID).Scan(&summary); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec(`UPDATE drafts SET answers = ? WHERE id = ?`, string(answers), saved.ID); err != nil {
-		return err
-	}
-	return draft.WriteMarkdown(saved.Markdown, saved, summary)
-}
-
-// SaveChildren records the keys of the split tickets created from the draft
-// and rewrites its markdown with them.
-func (s *Store) SaveChildren(saved draft.Saved) error {
-	children, err := json.Marshal(saved.Children)
-	if err != nil {
-		return err
-	}
-	var summary string
-	if err := s.db.QueryRow(`SELECT summary FROM drafts WHERE id = ?`, saved.ID).Scan(&summary); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec(`UPDATE drafts SET children = ? WHERE id = ?`, string(children), saved.ID); err != nil {
-		return err
-	}
-	return draft.WriteMarkdown(saved.Markdown, saved, summary)
-}
-
-// Outline returns the repo's cached outline at a commit, if there is one.
-func (s *Store) Outline(repo, commit string) (string, bool, error) {
-	var outline string
-	err := s.db.QueryRow(`SELECT outline FROM outlines WHERE repo = ? AND commit_sha = ?`, repo, commit).Scan(&outline)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, nil
-	}
-	return outline, err == nil, err
-}
-
-// SaveOutline caches the repo's outline at a commit. A commit's files never
-// change, so an entry never goes stale.
-func (s *Store) SaveOutline(repo, commit, outline string) error {
-	_, err := s.db.Exec(
-		`INSERT OR REPLACE INTO outlines (repo, commit_sha, outline, created) VALUES (?, ?, ?, ?)`,
-		repo, commit, outline, time.Now().UTC().Format(time.RFC3339Nano),
-	)
-	return err
-}
-
-// Latest returns the ticket's newest draft, if there is one.
-func (s *Store) Latest(key string) (draft.Saved, bool, error) {
-	drafts, err := s.query(`WHERE key = ? ORDER BY id DESC LIMIT 1`, key)
-	if err != nil || len(drafts) == 0 {
-		return draft.Saved{}, false, err
-	}
-	return drafts[0], true, nil
-}
-
-// History returns every draft of the ticket, newest first.
-func (s *Store) History(key string) ([]draft.Saved, error) {
-	return s.query(`WHERE key = ? ORDER BY id DESC`, key)
-}
-
-func (s *Store) query(where string, args ...any) ([]draft.Saved, error) {
-	rows, err := s.db.Query(`SELECT id, key, approach, ref, step, session_id, cost_usd, session_cost_usd, turns, usage, created, draft, markdown, answers, children, scope FROM drafts `+where, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var drafts []draft.Saved
-	for rows.Next() {
-		var saved draft.Saved
-		var created, data, answers, usage, children, scope string
-		if err := rows.Scan(&saved.ID, &saved.Key, &saved.Approach, &saved.Ref, &saved.Step, &saved.SessionID, &saved.CostUSD, &saved.SessionCostUSD, &saved.Turns, &usage, &created, &data, &saved.Markdown, &answers, &children, &scope); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal([]byte(usage), &saved.Usage); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal([]byte(answers), &saved.Answers); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal([]byte(children), &saved.Children); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal([]byte(scope), &saved.Scope); err != nil {
-			return nil, err
-		}
-		if saved.Created, err = time.Parse(time.RFC3339Nano, created); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal([]byte(data), &saved.Draft); err != nil {
-			return nil, err
-		}
-		drafts = append(drafts, saved)
-	}
-	return drafts, rows.Err()
-}
-
-// AddBrief records a brief, returning it with its ID set.
-func (s *Store) AddBrief(saved draft.SavedBrief) (draft.SavedBrief, error) {
-	if saved.Created.IsZero() {
-		saved.Created = time.Now()
-	}
-	brief, err := json.Marshal(saved.Brief)
-	if err != nil {
-		return draft.SavedBrief{}, err
-	}
-	usage, err := json.Marshal(saved.Usage)
-	if err != nil {
-		return draft.SavedBrief{}, err
-	}
-	result, err := s.db.Exec(
-		`INSERT INTO briefs (key, ref, session_id, cost_usd, turns, usage, created, brief) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		saved.Key, saved.Ref, saved.SessionID, saved.CostUSD, saved.Turns, string(usage),
-		saved.Created.UTC().Format(time.RFC3339Nano), string(brief),
-	)
-	if err != nil {
-		return draft.SavedBrief{}, err
-	}
-	saved.ID, err = result.LastInsertId()
-	return saved, err
-}
-
-// LatestBrief returns the ticket's newest brief, if there is one.
-func (s *Store) LatestBrief(key string) (draft.SavedBrief, bool, error) {
-	var saved draft.SavedBrief
-	var created, usage, brief string
-	err := s.db.QueryRow(
-		`SELECT id, key, ref, session_id, cost_usd, turns, usage, created, brief FROM briefs WHERE key = ? ORDER BY id DESC LIMIT 1`, key,
-	).Scan(&saved.ID, &saved.Key, &saved.Ref, &saved.SessionID, &saved.CostUSD, &saved.Turns, &usage, &created, &brief)
-	if errors.Is(err, sql.ErrNoRows) {
-		return draft.SavedBrief{}, false, nil
-	}
-	if err != nil {
-		return draft.SavedBrief{}, false, err
-	}
-	if err := json.Unmarshal([]byte(usage), &saved.Usage); err != nil {
-		return draft.SavedBrief{}, false, err
-	}
-	if err := json.Unmarshal([]byte(brief), &saved.Brief); err != nil {
-		return draft.SavedBrief{}, false, err
-	}
-	saved.Created, err = time.Parse(time.RFC3339Nano, created)
-	return saved, err == nil, err
-}
-
-// AddTriage records a triage, returning it with its ID set.
-func (s *Store) AddTriage(saved draft.SavedTriage) (draft.SavedTriage, error) {
-	if saved.Created.IsZero() {
-		saved.Created = time.Now()
-	}
-	triage, err := json.Marshal(saved.Triage)
-	if err != nil {
-		return draft.SavedTriage{}, err
-	}
-	usage, err := json.Marshal(saved.Usage)
-	if err != nil {
-		return draft.SavedTriage{}, err
-	}
-	result, err := s.db.Exec(
-		`INSERT INTO triages (key, session_id, cost_usd, turns, usage, created, triage) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		saved.Key, saved.SessionID, saved.CostUSD, saved.Turns, string(usage),
-		saved.Created.UTC().Format(time.RFC3339Nano), string(triage),
-	)
-	if err != nil {
-		return draft.SavedTriage{}, err
-	}
-	saved.ID, err = result.LastInsertId()
-	return saved, err
-}
-
-// LatestTriage returns the ticket's newest triage, if there is one.
-func (s *Store) LatestTriage(key string) (draft.SavedTriage, bool, error) {
-	var saved draft.SavedTriage
-	var created, usage, triage string
-	err := s.db.QueryRow(
-		`SELECT id, key, session_id, cost_usd, turns, usage, created, triage FROM triages WHERE key = ? ORDER BY id DESC LIMIT 1`, key,
-	).Scan(&saved.ID, &saved.Key, &saved.SessionID, &saved.CostUSD, &saved.Turns, &usage, &created, &triage)
-	if errors.Is(err, sql.ErrNoRows) {
-		return draft.SavedTriage{}, false, nil
-	}
-	if err != nil {
-		return draft.SavedTriage{}, false, err
-	}
-	if err := json.Unmarshal([]byte(usage), &saved.Usage); err != nil {
-		return draft.SavedTriage{}, false, err
-	}
-	if err := json.Unmarshal([]byte(triage), &saved.Triage); err != nil {
-		return draft.SavedTriage{}, false, err
-	}
-	saved.Created, err = time.Parse(time.RFC3339Nano, created)
-	return saved, err == nil, err
-}
-
-// Event is one thing that happened in refine, recorded when tracking is on.
-type Event struct {
-	At      time.Time
-	UI      string
-	Session string
-	Name    string
-	Key     string
-	Props   map[string]any
-	// Build is the commit refine ran from (-dirty with uncommitted changes)
-	// and Prompts the fingerprint of the prompts Claude was given.
-	Build   string
-	Prompts string
-}
-
-// AddEvent records an event.
-func (s *Store) AddEvent(e Event) error {
-	props, err := json.Marshal(e.Props)
-	if err != nil {
-		return err
-	}
-	if e.Props == nil {
-		props = []byte("{}")
-	}
-	_, err = s.db.Exec(`INSERT INTO events (at, ui, session, name, key, props, build, prompts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.At.UTC().Format(time.RFC3339Nano), e.UI, e.Session, e.Name, e.Key, string(props), e.Build, e.Prompts)
-	return err
-}
-
-// Events returns the events recorded since a time, oldest first.
-func (s *Store) Events(since time.Time) ([]Event, error) {
-	rows, err := s.db.Query(`SELECT at, ui, session, name, key, props, build, prompts FROM events WHERE at >= ? ORDER BY id`, since.UTC().Format(time.RFC3339Nano))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var events []Event
-	for rows.Next() {
-		var e Event
-		var at, props string
-		if err := rows.Scan(&at, &e.UI, &e.Session, &e.Name, &e.Key, &props, &e.Build, &e.Prompts); err != nil {
-			return nil, err
-		}
-		if e.At, err = time.Parse(time.RFC3339Nano, at); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal([]byte(props), &e.Props); err != nil {
-			return nil, err
-		}
-		events = append(events, e)
-	}
-	return events, rows.Err()
-}
-
-// Assign returns the ticket's arm in the experiment, assigning one the first
-// time. Arms go in balanced pairs: the first of each pair is drawn from
-// coin, the second is the other arm, so the arms stay even.
-func (s *Store) Assign(key, name string, coin func() bool) (string, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer tx.Rollback()
-	var arm string
-	err = tx.QueryRow(`SELECT arm FROM experiments WHERE key = ? AND name = ?`, key, name).Scan(&arm)
-	if err == nil {
-		return arm, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return "", err
-	}
-	var count int
-	if err := tx.QueryRow(`SELECT count(*) FROM experiments WHERE name = ?`, name).Scan(&count); err != nil {
-		return "", err
-	}
-	if count%2 == 1 {
-		var last string
-		if err := tx.QueryRow(`SELECT arm FROM experiments WHERE name = ? ORDER BY assigned DESC, rowid DESC LIMIT 1`, name).Scan(&last); err != nil {
-			return "", err
+	for _, table := range old {
+		if _, err := tx.Exec(`DROP TABLE IF EXISTS ` + table); err != nil {
+			return err
 		}
-		arm = "A"
-		if last == "A" {
-			arm = "B"
+	}
+	if _, err := tx.Exec(schema); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Load returns a ticket's refinement, if it has one.
+func (s *Store) Load(key string) (refine.Refinement, bool, error) {
+	var state string
+	err := s.db.QueryRow(`SELECT state FROM refinements WHERE key = ?`, key).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return refine.Refinement{}, false, nil
+	}
+	if err != nil {
+		return refine.Refinement{}, false, err
+	}
+	var r refine.Refinement
+	return r, true, json.Unmarshal([]byte(state), &r)
+}
+
+// All returns every refinement, by key.
+func (s *Store) All() ([]refine.Refinement, error) {
+	rows, err := s.db.Query(`SELECT state FROM refinements ORDER BY key`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []refine.Refinement
+	for rows.Next() {
+		var state string
+		if err := rows.Scan(&state); err != nil {
+			return nil, err
 		}
-	} else if coin() {
-		arm = "B"
-	} else {
-		arm = "A"
+		var r refine.Refinement
+		if err := json.Unmarshal([]byte(state), &r); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
 	}
-	if _, err := tx.Exec(`INSERT INTO experiments (key, name, arm, assigned) VALUES (?, ?, ?, ?)`,
-		key, name, arm, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
-		return "", err
+	return out, rows.Err()
+}
+
+// Save writes a refinement, replacing the ticket's earlier one.
+func (s *Store) Save(r refine.Refinement) error {
+	if r.Updated.IsZero() {
+		r.Updated = time.Now()
 	}
-	return arm, tx.Commit()
+	state, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO refinements (key, state, updated) VALUES (?, ?, ?)
+		ON CONFLICT (key) DO UPDATE SET state = excluded.state, updated = excluded.updated`,
+		r.Key, string(state), r.Updated.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+// Delete forgets a ticket's refinement.
+func (s *Store) Delete(key string) error {
+	_, err := s.db.Exec(`DELETE FROM refinements WHERE key = ?`, key)
+	return err
+}
+
+// Profiles returns every repo's deployment profile, by repo.
+func (s *Store) Profiles() (map[string]refine.Profile, error) {
+	rows, err := s.db.Query(`SELECT profile FROM deploy_profiles`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]refine.Profile{}
+	for rows.Next() {
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			return nil, err
+		}
+		var p refine.Profile
+		if err := json.Unmarshal([]byte(data), &p); err != nil {
+			return nil, err
+		}
+		out[p.Repo] = p
+	}
+	return out, rows.Err()
+}
+
+// SaveProfile writes a repo's deployment profile; one with no answers is
+// removed, so the repo is asked about again.
+func (s *Store) SaveProfile(p refine.Profile) error {
+	if len(p.Answers) == 0 {
+		_, err := s.db.Exec(`DELETE FROM deploy_profiles WHERE repo = ?`, p.Repo)
+		return err
+	}
+	if p.Updated.IsZero() {
+		p.Updated = time.Now()
+	}
+	data, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO deploy_profiles (repo, profile, updated) VALUES (?, ?, ?)
+		ON CONFLICT (repo) DO UPDATE SET profile = excluded.profile, updated = excluded.updated`,
+		p.Repo, string(data), p.Updated.UTC().Format(time.RFC3339Nano))
+	return err
 }

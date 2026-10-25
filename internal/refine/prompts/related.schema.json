@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["blockers", "overlaps"],
+  "properties": {
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "reason", "quote"],
+        "properties": {
+          "key": {"type": "string", "description": "The other ticket's key, from the list."},
+          "reason": {"type": "string", "description": "What this ticket needs from it, in one short sentence."},
+          "quote": {"type": "string", "description": "This ticket's own words that show the dependency, verbatim and short; empty when only a Jira link shows it."}
+        }
+      }
+    },
+    "overlaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "reason"],
+        "properties": {
+          "key": {"type": "string", "description": "The other ticket's key, from the list."},
+          "reason": {"type": "string", "description": "The shared work, in a few words."}
+        }
+      }
+    }
+  }
+}

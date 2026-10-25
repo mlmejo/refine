@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -42,12 +44,12 @@ func TestSearchSendsJQLAndDecodesIssues(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL, "me@example.com", "secret")
-	issues, err := client.Search(context.Background(), AssignedJQL("Refinement Ready - Team John"))
+	issues, err := client.Search(context.Background(), ListJQL("Refinement Ready - Team John"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if got.JQL != `assignee = currentUser() AND sprint = "Refinement Ready - Team John" ORDER BY updated DESC` {
+	if got.JQL != `assignee = currentUser() AND resolution = Unresolved AND sprint = "Refinement Ready - Team John" ORDER BY updated DESC` {
 		t.Errorf("jql = %q", got.JQL)
 	}
 	if !strings.Contains(strings.Join(got.Fields, ","), FieldStoryPointCriteria) {
@@ -79,8 +81,8 @@ func TestSearchReportsJiraErrors(t *testing.T) {
 	}
 }
 
-func TestAssignedJQLEscapesQuotes(t *testing.T) {
-	got := AssignedJQL(`Say "hi"`)
+func TestListJQLEscapesQuotes(t *testing.T) {
+	got := ListJQL(`Say "hi"`)
 	if !strings.Contains(got, `sprint = "Say \"hi\""`) {
 		t.Errorf("jql = %q", got)
 	}
@@ -415,14 +417,66 @@ func TestCreateChildReturnsTheKeyWhenPointsFail(t *testing.T) {
 	}
 }
 
-func TestOthersJQLCoversYourSprintsAndTheEpic(t *testing.T) {
-	got := OthersJQL("GEEK-900", "Refinement Ready - Team John", "Ready for Sprint - Team John")
-	want := `statusCategory != Done AND ((assignee = currentUser() AND (sprint in ("Refinement Ready - Team John", "Ready for Sprint - Team John") OR sprint in openSprints())) OR parent = "GEEK-900") ORDER BY key ASC`
+func TestCandidatesJQLCoversBothSprintsWithoutTheTicket(t *testing.T) {
+	got := CandidatesJQL("GEEK-101", "Refinement Ready - Team John", "Ready for Sprint - Team John")
+	want := `assignee = currentUser() AND resolution = Unresolved AND sprint in ("Refinement Ready - Team John", "Ready for Sprint - Team John") AND key != "GEEK-101" ORDER BY key ASC`
 	if got != want {
 		t.Errorf("jql = %q", got)
 	}
-	if got := OthersJQL("", "A"); strings.Contains(got, "parent") {
-		t.Errorf("jql without a parent = %q", got)
+}
+
+func TestTicketsReadLinks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"issues":[{"key":"GEEK-2","fields":{"summary":"Refunds","status":{"name":"To Do"},
+			"issuelinks":[
+				{"type":{"name":"Blocks","inward":"is blocked by","outward":"blocks"},"inwardIssue":{"key":"GEEK-1","fields":{"summary":"Stripe","status":{"name":"Done"}}}},
+				{"type":{"name":"Relates","inward":"relates to","outward":"relates to"},"outwardIssue":{"key":"GEEK-3","fields":{"summary":"Email","status":{"name":"To Do"}}}}
+			]}}]}`))
+	}))
+	defer server.Close()
+
+	tickets, err := New(server.URL, "me", "t").Linked(context.Background(), "jql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Link{
+		{Type: "Blocks", Relation: "is blocked by", Key: "GEEK-1", Summary: "Stripe", Status: "Done"},
+		{Type: "Relates", Relation: "relates to", Key: "GEEK-3", Summary: "Email", Status: "To Do"},
+	}
+	if len(tickets) != 1 || !reflect.DeepEqual(tickets[0].Links, want) {
+		t.Fatalf("links = %+v", tickets)
+	}
+}
+
+func TestRelateSkipsTicketsAlreadyLinked(t *testing.T) {
+	var posts []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Write([]byte(`{"key":"GEEK-2","fields":{"summary":"Refunds","status":{"name":"To Do"},"issuelinks":[
+				{"type":{"name":"Relates","inward":"relates to","outward":"relates to"},"outwardIssue":{"key":"GEEK-1","fields":{"summary":"Stripe","status":{"name":"Done"}}}}]}}`))
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		posts = append(posts, r.URL.Path+" "+string(body))
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	c := New(server.URL, "me", "t")
+	if err := c.Relate(context.Background(), "GEEK-2", "GEEK-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Relate(context.Background(), "GEEK-2", "GEEK-9"); err != nil {
+		t.Fatal(err)
+	}
+	if len(posts) != 1 || !strings.Contains(posts[0], `/rest/api/2/issueLink`) || !strings.Contains(posts[0], `"outwardIssue":{"key":"GEEK-9"}`) || !strings.Contains(posts[0], `"name":"Relates"`) {
+		t.Fatalf("posts = %q", posts)
+	}
+}
+
+func TestRefinedNeedsBothFields(t *testing.T) {
+	if (Issue{AcceptanceCriteria: "* a"}).Refined() || !(Issue{AcceptanceCriteria: "* a", TechnicalImplementation: "x"}).Refined() {
+		t.Fatal("Refined")
 	}
 }
 

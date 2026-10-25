@@ -29,86 +29,49 @@ func commit(t *testing.T, repo, file, body string) {
 	run(t, repo, "commit", "--quiet", "-m", body)
 }
 
-// cloned returns an origin with a develop branch and a clone of it on develop.
+// cloned returns an origin whose default branch is main, and a clone of it.
 func cloned(t *testing.T) (origin, clone string) {
 	t.Helper()
 	origin = t.TempDir()
-	run(t, origin, "init", "--quiet", "-b", "develop")
+	run(t, origin, "init", "--quiet", "-b", "main")
 	commit(t, origin, "app.txt", "v1")
 	clone = filepath.Join(t.TempDir(), "app")
 	run(t, origin, "clone", "--quiet", origin, clone)
 	return origin, clone
 }
 
-func TestCheckUpToDate(t *testing.T) {
-	_, clone := cloned(t)
-	s := Check(context.Background(), "app", clone, "develop")
-	if s.Behind != 0 || s.Skip != "" {
-		t.Errorf("status = %+v", s)
-	}
-}
-
-func TestCheckBehindThenPull(t *testing.T) {
-	ctx := context.Background()
+func TestFetchPrefersDevelop(t *testing.T) {
 	origin, clone := cloned(t)
-	commit(t, origin, "app.txt", "v2")
-	commit(t, origin, "app.txt", "v3")
-	// Untracked files do not stop the pull.
-	os.WriteFile(filepath.Join(clone, "notes.txt"), []byte("mine"), 0o600)
-
-	s := Check(ctx, "app", clone, "develop")
-	if s.Behind != 2 || s.Skip != "" || s.Origin != run(t, origin, "rev-parse", "HEAD") {
+	run(t, origin, "branch", "develop")
+	s := Fetch(context.Background(), "app", clone)
+	if s.Error != "" || s.Branch != "develop" || s.Commit != run(t, origin, "rev-parse", "develop") {
 		t.Fatalf("status = %+v", s)
 	}
-	if err := Pull(ctx, s); err != nil {
-		t.Fatal(err)
+}
+
+func TestFetchFallsBackToTheDefaultBranchAndCountsNewCommits(t *testing.T) {
+	ctx := context.Background()
+	origin, clone := cloned(t)
+	if s := Fetch(ctx, "app", clone); s.Error != "" || s.Branch != "main" || s.New != 0 {
+		t.Fatalf("first fetch = %+v", s)
 	}
-	if got, _ := os.ReadFile(filepath.Join(clone, "app.txt")); string(got) != "v3" {
+	commit(t, origin, "app.txt", "v2")
+	commit(t, origin, "app.txt", "v3")
+	s := Fetch(ctx, "app", clone)
+	if s.Error != "" || s.New != 2 || s.Commit != run(t, origin, "rev-parse", "main") {
+		t.Fatalf("second fetch = %+v", s)
+	}
+	// The checkout is not touched.
+	if got, _ := os.ReadFile(filepath.Join(clone, "app.txt")); string(got) != "v1" {
 		t.Errorf("app.txt = %q", got)
-	}
-	if s := Check(ctx, "app", clone, "develop"); s.Behind != 0 || s.Skip != "" {
-		t.Errorf("after pull: %+v", s)
 	}
 }
 
-func TestCheckSkips(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("dirty", func(t *testing.T) {
-		origin, clone := cloned(t)
-		commit(t, origin, "app.txt", "v2")
-		os.WriteFile(filepath.Join(clone, "app.txt"), []byte("editing"), 0o600)
-		s := Check(ctx, "app", clone, "develop")
-		if s.Behind != 0 || !strings.Contains(s.Skip, "uncommitted changes") {
-			t.Errorf("status = %+v", s)
-		}
-	})
-
-	t.Run("diverged", func(t *testing.T) {
-		origin, clone := cloned(t)
-		commit(t, origin, "app.txt", "v2")
-		commit(t, clone, "local.txt", "local")
-		s := Check(ctx, "app", clone, "develop")
-		if s.Behind != 0 || !strings.Contains(s.Skip, "cannot fast-forward") {
-			t.Errorf("status = %+v", s)
-		}
-	})
-
-	t.Run("offline", func(t *testing.T) {
-		origin, clone := cloned(t)
-		os.RemoveAll(origin)
-		s := Check(ctx, "app", clone, "develop")
-		if s.Behind != 0 || !strings.Contains(s.Skip, "could not fetch origin") {
-			t.Errorf("status = %+v", s)
-		}
-	})
-
-	t.Run("other branch", func(t *testing.T) {
-		origin, clone := cloned(t)
-		commit(t, origin, "app.txt", "v2")
-		run(t, clone, "checkout", "--quiet", "-b", "feature/x")
-		if s := Check(ctx, "app", clone, "develop"); s.Behind != 0 || s.Skip != "" {
-			t.Errorf("status = %+v", s)
-		}
-	})
+func TestFetchFailsWithoutOrigin(t *testing.T) {
+	dir := t.TempDir()
+	run(t, dir, "init", "--quiet")
+	s := Fetch(context.Background(), "app", dir)
+	if s.Error == "" || s.Commit != "" {
+		t.Fatalf("status = %+v", s)
+	}
 }

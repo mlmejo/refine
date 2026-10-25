@@ -12,8 +12,9 @@ import (
 	"strings"
 )
 
-// Checkout puts ref into a detached worktree of repo at dest and returns its commit.
-// With fetch it refreshes origin first and prefers origin/<ref> over the local branch.
+// Checkout puts ref, a branch or a commit, into a detached worktree of repo
+// at dest and returns its commit. With fetch it refreshes origin first and
+// prefers origin/<ref> over the local branch.
 func Checkout(ctx context.Context, repo, ref, dest string, fetch bool) (string, error) {
 	if fetch {
 		// A failed fetch (offline, no origin) falls back to what is already there.
@@ -45,7 +46,7 @@ func Checkout(ctx context.Context, repo, ref, dest string, fetch bool) (string, 
 }
 
 func resolve(ctx context.Context, repo, ref string) (string, error) {
-	for _, candidate := range []string{"refs/remotes/origin/" + ref, "refs/heads/" + ref} {
+	for _, candidate := range []string{"refs/remotes/origin/" + ref, "refs/heads/" + ref, ref} {
 		if commit, err := git(ctx, repo, "rev-parse", "--verify", "--quiet", candidate+"^{commit}"); err == nil {
 			return commit, nil
 		}

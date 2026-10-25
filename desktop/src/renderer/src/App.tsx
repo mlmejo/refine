@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { BackendState } from '../../preload/index.d'
 import { RefineProvider, useRefine } from './store'
-import { Sidebar } from './views/Sidebar'
-import { TicketPane } from './views/TicketPane'
-import { SyncDialog } from './views/SyncDialog'
-import { ReposDialog } from './views/ReposDialog'
+import { Nav } from './views/Nav'
+import { Tickets } from './views/Tickets'
+import { Ticket } from './views/Ticket'
+import { ReposScreen } from './views/ReposScreen'
+import { Palette } from './views/Palette'
 
 export function App() {
   const [state, setState] = useState<BackendState>({ status: 'starting' })
@@ -16,7 +17,9 @@ export function App() {
   if (state.status === 'starting') {
     return (
       <div className="boot">
-        <span className="spinner" /> Starting refine…
+        <div className="row">
+          <span className="spinner" /> Starting refine…
+        </div>
       </div>
     )
   }
@@ -26,12 +29,14 @@ export function App() {
         <div className="boot-card">
           <h2>refine could not start</h2>
           <pre className="error-text">{state.error}</pre>
-          <p className="quiet">
+          <p className="muted">
             Check ~/.config/refine/config.toml and that the refine binary is built (pnpm go:build).
           </p>
-          <button className="primary" onClick={() => void window.refine.restartBackend().then(setState)}>
-            Try again
-          </button>
+          <div>
+            <button className="btn primary" onClick={() => void window.refine.restartBackend().then(setState)}>
+              Try again
+            </button>
+          </div>
         </div>
       </div>
     )
@@ -45,22 +50,33 @@ export function App() {
 
 function Shell() {
   const refine = useRefine()
-  const [repos, setRepos] = useState(false)
+  const { setPalette, screen, setScreen } = refine
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPalette(true)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [setPalette])
+
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') void Notification.requestPermission()
+  }, [])
+
   return (
     <div className="shell">
-      <Sidebar onRepos={() => setRepos(true)} />
+      <Nav />
       <main className="main">
-        {refine.selected ? (
-          <TicketPane key={refine.selected} issueKey={refine.selected} />
-        ) : (
-          <div className="empty">
-            <p>Pick a ticket, or open one by key.</p>
-            {refine.flash && <p className={refine.flash.error ? 'error-text' : 'done-text'}>{refine.flash.text}</p>}
-          </div>
-        )}
+        {screen.kind === 'tickets' && <Tickets />}
+        {screen.kind === 'ticket' && <Ticket key={screen.key} ticketKey={screen.key} />}
+        {screen.kind === 'repos' && <ReposScreen onBack={() => setScreen({ kind: 'tickets' })} />}
       </main>
-      {refine.syncAsk && <SyncDialog />}
-      {repos && <ReposDialog onClose={() => setRepos(false)} />}
+      {refine.palette && <Palette />}
+      {refine.toast && <div className={`toast ${refine.toast.error ? 'error-text' : ''}`}>{refine.toast.text}</div>}
     </div>
   )
 }

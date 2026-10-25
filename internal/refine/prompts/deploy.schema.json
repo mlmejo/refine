@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repo_questions", "ticket_questions"],
+  "properties": {
+    "repo_questions": {
+      "type": "array",
+      "description": "How each repo without a saved profile deploys. Empty when every repo has one.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repo", "question", "options", "recommended", "why"],
+        "properties": {
+          "repo": {"type": "string", "description": "The repo's name, from the list of repos without a profile."},
+          "question": {"type": "string"},
+          "options": {"type": "array", "minItems": 2, "maxItems": 4, "items": {"type": "string"}},
+          "recommended": {"type": "integer", "description": "0-based index of the recommended option."},
+          "why": {"type": "string"}
+        }
+      }
+    },
+    "ticket_questions": {
+      "type": "array",
+      "maxItems": 5,
+      "description": "What this ticket needs at deploy. Empty when it adds nothing.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "options", "recommended", "why"],
+        "properties": {
+          "question": {"type": "string"},
+          "options": {"type": "array", "minItems": 2, "maxItems": 4, "items": {"type": "string"}},
+          "recommended": {"type": "integer", "description": "0-based index of the recommended option."},
+          "why": {"type": "string"}
+        }
+      }
+    }
+  }
+}

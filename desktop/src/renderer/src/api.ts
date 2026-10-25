@@ -1,4 +1,4 @@
-import type { Found, Info, Issue, Job, JobKind, Repo, RepoStatus, Saved, SavedSet, TicketContext, Written } from './types'
+import type { Answers, Found, Info, Job, JobKind, Page, QA, Repo, Result, View } from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -19,38 +19,35 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
 const key = (k: string) => encodeURIComponent(k)
+const ticket = (k: string) => `/api/tickets/${key(k)}`
 
 export const api = {
   info: () => call<Info>('GET', '/api/info'),
-  event: (name: string, key: string, props: Record<string, unknown>) =>
-    call<null>('POST', '/api/events', { name, key, props }),
-  tickets: () => call<{ user: string; issues: Issue[] }>('GET', '/api/tickets'),
-  lookup: (q: string) => call<Issue>('GET', `/api/lookup?q=${encodeURIComponent(q)}`),
+  tickets: () => call<Page>('GET', '/api/tickets'),
+  lookup: (q: string) => call<{ key: string }>('GET', `/api/lookup?q=${encodeURIComponent(q)}`),
   hide: (k: string) => call<null>('PUT', `/api/hidden/${key(k)}`),
-  unhide: (k: string) => call<null>('DELETE', `/api/hidden/${key(k)}`),
-  saved: (k: string) => call<SavedSet>('GET', `/api/tickets/${key(k)}/saved`),
-  context: (k: string) => call<TicketContext>('GET', `/api/tickets/${key(k)}/context`),
-  answers: (k: string, draftID: number, answers: Record<string, string>) =>
-    call<Saved>('PUT', `/api/tickets/${key(k)}/answers`, { draft_id: draftID, answers }),
-  reveal: (k: string) => call<{ path: string }>('POST', `/api/tickets/${key(k)}/reveal`),
-  write: (k: string, draftID: number) =>
-    call<Written>('POST', `/api/tickets/${key(k)}/write`, { draft_id: draftID }),
-  move: (k: string) => call<null>('POST', `/api/tickets/${key(k)}/move`),
-  check: () => call<RepoStatus[]>('POST', '/api/sync/check'),
-  pull: (stale: RepoStatus[]) =>
-    call<{ pulled: RepoStatus[]; error?: string }>('POST', '/api/sync/pull', stale),
+
+  open: (k: string) => call<View>('GET', ticket(k)),
+  reset: (k: string) => call<null>('DELETE', ticket(k)),
+  decide: (k: string, blocker: string, decision: 'accepted' | 'rejected') =>
+    call<View>('PUT', `${ticket(k)}/decisions`, { blocker, decision }),
+  proceed: (k: string) => call<View>('POST', `${ticket(k)}/continue`),
+  setRepos: (k: string, repos: string[]) => call<View>('PUT', `${ticket(k)}/repos`, { repos }),
+  sync: (k: string) => call<View>('POST', `${ticket(k)}/sync`),
+  answer: (k: string, answers: Answers) => call<View>('PUT', `${ticket(k)}/answers`, answers),
+  edit: (k: string, result: Result) => call<View>('PUT', `${ticket(k)}/result`, result),
+  stamp: (k: string) => call<View>('POST', `${ticket(k)}/stamp`),
+
+  job: () => call<Job | null>('GET', '/api/job'),
+  startJob: (kind: JobKind, k: string, explanation?: string) =>
+    call<Job>('POST', '/api/jobs', { kind, key: k, explanation }),
+  cancelJob: (id: string) => call<null>('DELETE', `/api/jobs/${id}`),
+
   repos: () => call<Repo[]>('GET', '/api/repos'),
   addRepo: (name: string, dir: string) => call<Repo[]>('POST', '/api/repos', { name, dir }),
   removeRepo: (name: string) => call<Repo[]>('DELETE', `/api/repos/${encodeURIComponent(name)}`),
   scanRepos: (dir: string) => call<Found[]>('GET', `/api/repos/scan?dir=${encodeURIComponent(dir)}`),
   folderStart: () => call<{ start: string }>('GET', '/api/folders'),
-  jobs: () => call<Job[]>('GET', '/api/jobs'),
-  startJob: (
-    kind: JobKind,
-    k: string,
-    opts: { approach?: string; scope?: Record<string, string>; resume?: boolean } = {}
-  ) =>
-    call<Job>('POST', '/api/jobs', { kind, key: k, ...opts }),
-  job: (id: string) => call<Job>('GET', `/api/jobs/${id}`),
-  cancelJob: (id: string) => call<null>('DELETE', `/api/jobs/${id}`)
+  setProfile: (repo: string, answers: QA[]) =>
+    call<Repo[]>('PUT', `/api/profiles/${encodeURIComponent(repo)}`, { answers })
 }

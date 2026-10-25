@@ -29,26 +29,6 @@ const DefaultReadySprint = "Ready for Sprint - Team John"
 type Config struct {
 	Jira  Jira              `toml:"jira"`
 	Repos map[string]string `toml:"repos"`
-	Flags Flags             `toml:"flags"`
-	// Experiments switches A/B tests on; see docs/experiments.
-	Experiments Experiments `toml:"experiments"`
-}
-
-// Experiments are the A/B tests that can run. Each assigns tickets to arms.
-type Experiments struct {
-	// PlainNames tests plain names with a glossary against inline code in
-	// findings and questions (docs/experiments/plain-names.md).
-	PlainNames bool `toml:"plain_names"`
-}
-
-// TrackingEnv turns tracking on (1) or off (0) over the config's flag.
-const TrackingEnv = "REFINE_TRACKING"
-
-// Flags switch features that are on trial.
-type Flags struct {
-	// Tracking records how refine is used, locally in refine.db, so its
-	// design can be judged from real use. Nothing leaves the machine.
-	Tracking bool `toml:"tracking"`
 }
 
 // Jira holds the Jira site and account.
@@ -93,12 +73,6 @@ func Load(path string) (Config, error) {
 	}
 
 	cfg.Jira.Token = token(".env")
-	switch os.Getenv(TrackingEnv) {
-	case "1", "true":
-		cfg.Flags.Tracking = true
-	case "0", "false":
-		cfg.Flags.Tracking = false
-	}
 	if cfg.Jira.Sprint == "" {
 		cfg.Jira.Sprint = DefaultSprint
 	}

@@ -48,20 +48,12 @@ export function useLoginPath(): void {
   }
 }
 
-// refArg passes --ref through, from REFINE_REF or the app's own arguments.
-function refArgs(): string[] {
-  const ref =
-    process.env.REFINE_REF ||
-    process.argv.find((a) => a.startsWith('--ref='))?.slice('--ref='.length)
-  return ref ? ['--ref', ref] : []
-}
-
 export function startBackend(onExit: (error: string) => void): Promise<Backend> {
   const bin = binary()
   if (!existsSync(bin)) {
     return Promise.reject(new Error(`refine binary not found at ${bin}; run pnpm go:build`))
   }
-  const child = spawn(bin, [...refArgs(), 'serve'], { cwd: projectDir(), stdio: ['pipe', 'pipe', 'pipe'] })
+  const child = spawn(bin, ['serve'], { cwd: projectDir(), stdio: ['pipe', 'pipe', 'pipe'] })
   let stderr = ''
   child.stderr.on('data', (chunk) => {
     stderr = (stderr + chunk.toString()).slice(-4000)

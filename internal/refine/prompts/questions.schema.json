@@ -1,0 +1,70 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "questions",
+    "blockers"
+  ],
+  "properties": {
+    "questions": {
+      "type": "array",
+      "maxItems": 5,
+      "description": "This round's questions, most important first. Empty when every decision is settled.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question",
+          "options",
+          "recommended",
+          "why"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "One line under 20 words."
+          },
+          "options": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 4,
+            "items": {
+              "type": "string"
+            },
+            "description": "2 to 4 options of a few words each."
+          },
+          "recommended": {
+            "type": "integer",
+            "description": "0-based index of the recommended option."
+          },
+          "why": {
+            "type": "string",
+            "description": "Why that option, in under 12 words."
+          }
+        }
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "description": "Other open tickets whose work this ticket needs, found while reading the code. Empty when none.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "reason"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The other ticket's key, from the list."
+          },
+          "reason": {
+            "type": "string",
+            "description": "What this ticket needs from it, in one short sentence."
+          }
+        }
+      }
+    }
+  }
+}

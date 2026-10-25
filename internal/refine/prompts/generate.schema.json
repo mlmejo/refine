@@ -1,0 +1,223 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "acceptance_criteria",
+    "technical_implementation",
+    "ratings",
+    "split",
+    "deploy_needs"
+  ],
+  "properties": {
+    "acceptance_criteria": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "One plain sentence, no label or headline."
+      }
+    },
+    "technical_implementation": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "repo",
+          "files"
+        ],
+        "properties": {
+          "repo": {
+            "type": "string",
+            "description": "Bare repo name, no annotation."
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "new"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "new": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "ratings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "novelty",
+        "risk",
+        "dependency",
+        "testing",
+        "deployment"
+      ],
+      "properties": {
+        "novelty": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        },
+        "risk": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        },
+        "dependency": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        },
+        "testing": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High",
+            "N/A"
+          ]
+        },
+        "deployment": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        }
+      }
+    },
+    "split": {
+      "type": "array",
+      "description": "Split tickets after the original's first slice. Empty when the ticket is one actionable issue.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "acceptance_criteria",
+          "technical_implementation",
+          "ratings"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Feature, a dash, then the slice, e.g. \"Book Management - Deleting Book\"."
+          },
+          "acceptance_criteria": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "technical_implementation": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "repo",
+                "files"
+              ],
+              "properties": {
+                "repo": {
+                  "type": "string",
+                  "description": "Bare repo name, no annotation."
+                },
+                "files": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "path",
+                      "new"
+                    ],
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "new": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "ratings": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "novelty",
+              "risk",
+              "dependency",
+              "testing",
+              "deployment"
+            ],
+            "properties": {
+              "novelty": {
+                "enum": [
+                  "Low",
+                  "Medium",
+                  "High"
+                ]
+              },
+              "risk": {
+                "enum": [
+                  "Low",
+                  "Medium",
+                  "High"
+                ]
+              },
+              "dependency": {
+                "enum": [
+                  "Low",
+                  "Medium",
+                  "High"
+                ]
+              },
+              "testing": {
+                "enum": [
+                  "Low",
+                  "Medium",
+                  "High",
+                  "N/A"
+                ]
+              },
+              "deployment": {
+                "enum": [
+                  "Low",
+                  "Medium",
+                  "High"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "deploy_needs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "One concrete deploy step."
+      }
+    }
+  }
+}

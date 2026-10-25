@@ -1,5 +1,6 @@
-// Package gitsync tells whether a repo's checked-out branch is behind origin,
-// so Claude does not read stale code, and fast-forwards it on request.
+// Package gitsync fetches the branch Claude reads in each repo: develop when
+// origin has it, else origin's default branch. Claude reads the fetched
+// commit in a worktree, so the developer's checkout is never touched.
 package gitsync
 
 import (
@@ -14,96 +15,82 @@ import (
 	"time"
 )
 
-// fetchTimeout bounds the fetch, so an unreachable origin reads as offline
-// instead of holding up the draft.
-const fetchTimeout = 15 * time.Second
+// Preferred is the branch Claude reads when origin has it.
+const Preferred = "develop"
 
-// Status is how a repo's branch compares with origin. Behind is set only when
-// it can be pulled; Skip says why it was not compared or cannot be pulled.
+// fetchTimeout bounds each call to origin, so an unreachable origin fails
+// fast instead of holding up the refinement.
+const fetchTimeout = 20 * time.Second
+
+// Status is a repo fetched for reading: the branch, the commit Claude reads,
+// and how many commits the fetch brought in. Error says why the repo cannot
+// be read; a repo with an error is not used.
 type Status struct {
-	Name   string
-	Dir    string
-	Branch string
-	Behind int
-	// Origin is the commit origin/<Branch> is at, so a declined pull is not
-	// asked about again until origin moves.
-	Origin string
-	Skip   string
+	Name   string `json:"name"`
+	Dir    string `json:"dir"`
+	Branch string `json:"branch"`
+	Commit string `json:"commit"`
+	New    int    `json:"new"`
+	Error  string `json:"error,omitempty"`
 }
 
-// Check fetches origin and compares the repo with origin/<branch> when branch
-// is checked out. A repo on another branch comes back as zero, since Claude
-// reads that branch on purpose.
-func Check(ctx context.Context, name, dir, branch string) Status {
-	s := Status{Name: name, Dir: dir, Branch: branch}
-	current, err := git(ctx, dir, "branch", "--show-current")
-	if err != nil || current != branch {
+// Fetch picks the repo's branch and fetches it from origin.
+func Fetch(ctx context.Context, name, dir string) Status {
+	s := Status{Name: name, Dir: dir}
+	branch, err := branch(ctx, dir)
+	if err != nil {
+		s.Error = err.Error()
 		return s
 	}
+	s.Branch = branch
+	upstream := "refs/remotes/origin/" + branch
+	before, _ := git(ctx, dir, "rev-parse", "--verify", "--quiet", upstream+"^{commit}")
 
 	fetchCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
-	if _, err := git(fetchCtx, dir, "fetch", "--quiet", "origin", branch); err != nil {
-		s.Skip = fmt.Sprintf("could not fetch origin (offline?), so %s is read as it is", branch)
+	if _, err := git(fetchCtx, dir, "fetch", "--quiet", "origin", "+refs/heads/"+branch+":"+upstream); err != nil {
+		s.Error = "could not fetch " + branch + " from origin: " + err.Error()
 		return s
 	}
-
-	upstream := "refs/remotes/origin/" + branch
-	s.Origin, err = git(ctx, dir, "rev-parse", "--verify", "--quiet", upstream+"^{commit}")
-	if err != nil {
-		s.Skip = "origin has no " + branch + " branch"
+	if s.Commit, err = git(ctx, dir, "rev-parse", "--verify", "--quiet", upstream+"^{commit}"); err != nil {
+		s.Error = "origin has no " + branch + " branch"
 		return s
 	}
-	counts, err := git(ctx, dir, "rev-list", "--left-right", "--count", "HEAD..."+upstream)
-	if err != nil {
-		s.Skip = err.Error()
-		return s
-	}
-	ahead, behind, err := parseCounts(counts)
-	if err != nil || behind == 0 {
-		return s
-	}
-
-	switch {
-	case ahead > 0:
-		s.Skip = fmt.Sprintf("%s has %d local commits and is %d behind origin, so it cannot fast-forward; reading it as it is", branch, ahead, behind)
-	case dirty(ctx, dir):
-		s.Skip = fmt.Sprintf("%s is %d commits behind origin but has uncommitted changes, so it is read as it is", branch, behind)
-	default:
-		s.Behind = behind
+	if before != "" && before != s.Commit {
+		if count, err := git(ctx, dir, "rev-list", "--count", before+".."+s.Commit); err == nil {
+			s.New, _ = strconv.Atoi(count)
+		}
 	}
 	return s
 }
 
-// Pull fast-forwards the checked-out branch to the origin commit Check saw.
-func Pull(ctx context.Context, s Status) error {
-	_, err := git(ctx, s.Dir, "merge", "--ff-only", "--quiet", s.Origin)
-	return err
-}
-
-func parseCounts(out string) (int, int, error) {
-	fields := strings.Fields(out)
-	if len(fields) != 2 {
-		return 0, 0, fmt.Errorf("unexpected rev-list output %q", out)
-	}
-	ahead, err := strconv.Atoi(fields[0])
+// branch is develop when origin has it, else origin's default branch.
+func branch(ctx context.Context, dir string) (string, error) {
+	listCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
+	defer cancel()
+	out, err := git(listCtx, dir, "ls-remote", "--symref", "origin", "HEAD", "refs/heads/"+Preferred)
 	if err != nil {
-		return 0, 0, err
+		return "", fmt.Errorf("could not reach origin: %w", err)
 	}
-	behind, err := strconv.Atoi(fields[1])
-	return ahead, behind, err
-}
-
-// dirty reports tracked changes; untracked files do not stop a fast-forward
-// unless origin adds the same path, and then the merge says so.
-func dirty(ctx context.Context, dir string) bool {
-	out, err := git(ctx, dir, "status", "--porcelain", "--untracked-files=no")
-	return err != nil || out != ""
+	var fallback string
+	for line := range strings.SplitSeq(out, "\n") {
+		fields := strings.Fields(line)
+		switch {
+		case len(fields) == 2 && fields[1] == "refs/heads/"+Preferred:
+			return Preferred, nil
+		case len(fields) == 3 && fields[0] == "ref:" && fields[2] == "HEAD":
+			fallback = strings.TrimPrefix(fields[1], "refs/heads/")
+		}
+	}
+	if fallback == "" {
+		return "", fmt.Errorf("origin has no %s branch and no default branch", Preferred)
+	}
+	return fallback, nil
 }
 
 func git(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	// The TUI owns the terminal, so git must fail rather than ask for a password.
+	// No one can answer a password prompt, so git must fail instead.
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if os.Getenv("GIT_SSH_COMMAND") == "" {
 		cmd.Env = append(cmd.Env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes")

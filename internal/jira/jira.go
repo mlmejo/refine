@@ -55,10 +55,12 @@ type Ticket struct {
 // Link is another ticket linked to this one, read from this ticket's side,
 // for example "is blocked by".
 type Link struct {
-	Relation string
-	Key      string
-	Summary  string
-	Status   string
+	// Type is the link type's name, e.g. "Blocks" or "Relates".
+	Type     string `json:"type"`
+	Relation string `json:"relation"`
+	Key      string `json:"key"`
+	Summary  string `json:"summary"`
+	Status   string `json:"status"`
 }
 
 // Refinement is what refine writes back to a ticket.
@@ -131,30 +133,20 @@ func ParseKey(input, project string) (string, bool) {
 	return "", false
 }
 
-// AssignedJQL lists the current user's tickets in a sprint, newest first.
-func AssignedJQL(sprint string) string {
-	return fmt.Sprintf(`assignee = currentUser() AND sprint = %s ORDER BY updated DESC`, quote(sprint))
+// ListJQL lists the current user's unresolved tickets in a sprint, most
+// recently updated first.
+func ListJQL(sprint string) string {
+	return fmt.Sprintf(`assignee = currentUser() AND resolution = Unresolved AND sprint = %s ORDER BY updated DESC`, quote(sprint))
 }
 
-// OthersJQL lists the open tickets a refinement is compared with: the
-// current user's in the given sprints or any open sprint, and, when parent is
-// set, the rest of that epic, whoever has it.
-// FamilyJQL finds an epic or parent ticket and its children, the parent
-// first.
-func FamilyJQL(parent string) string {
-	return fmt.Sprintf(`key = %s OR parent = %s ORDER BY key ASC`, parent, parent)
-}
-
-func OthersJQL(parent string, sprints ...string) string {
+// CandidatesJQL lists the current user's unresolved tickets in the given
+// sprints other than key: the tickets a blocker or overlap is looked for in.
+func CandidatesJQL(key string, sprints ...string) string {
 	quoted := make([]string, len(sprints))
 	for i, sprint := range sprints {
 		quoted[i] = quote(sprint)
 	}
-	scopes := []string{fmt.Sprintf("(assignee = currentUser() AND (sprint in (%s) OR sprint in openSprints()))", strings.Join(quoted, ", "))}
-	if parent != "" {
-		scopes = append(scopes, "parent = "+quote(parent))
-	}
-	return fmt.Sprintf(`statusCategory != Done AND (%s) ORDER BY key ASC`, strings.Join(scopes, " OR "))
+	return fmt.Sprintf(`assignee = currentUser() AND resolution = Unresolved AND sprint in (%s) AND key != %s ORDER BY key ASC`, strings.Join(quoted, ", "), quote(key))
 }
 
 // Search runs a JQL query and returns the matching issues.
@@ -168,9 +160,15 @@ func (c *Client) Search(ctx context.Context, jql string) ([]Issue, error) {
 }
 
 // Tickets runs a JQL query and returns the matching tickets with their
-// descriptions, but no comments or points.
+// descriptions and links, but no comments or points.
 func (c *Client) Tickets(ctx context.Context, jql string) ([]Ticket, error) {
-	return c.search(ctx, jql, "description")
+	return c.search(ctx, jql, "description", "issuelinks")
+}
+
+// Linked runs a JQL query and returns the matching tickets with their links,
+// but no descriptions.
+func (c *Client) Linked(ctx context.Context, jql string) ([]Ticket, error) {
+	return c.search(ctx, jql, "issuelinks")
 }
 
 func (c *Client) search(ctx context.Context, jql string, extra ...string) ([]Ticket, error) {
@@ -198,6 +196,7 @@ func (c *Client) search(ctx context.Context, jql string, extra ...string) ([]Tic
 				AcceptanceCriteria      json.RawMessage `json:"customfield_10042"`
 				TechnicalImplementation json.RawMessage `json:"customfield_10043"`
 				StoryPointCriteria      json.RawMessage `json:"customfield_10284"`
+				IssueLinks              []rawLink       `json:"issuelinks"`
 			} `json:"fields"`
 		} `json:"issues"`
 	}
@@ -217,6 +216,7 @@ func (c *Client) search(ctx context.Context, jql string, extra ...string) ([]Tic
 				StoryPointCriteria:      fieldText(raw.Fields.StoryPointCriteria),
 			},
 			Description: fieldText(raw.Fields.Description),
+			Links:       links(raw.Fields.IssueLinks),
 		}
 		tickets = append(tickets, ticket)
 	}
@@ -253,14 +253,7 @@ func (c *Client) GetTicket(ctx context.Context, key string) (Ticket, error) {
 					Body json.RawMessage `json:"body"`
 				} `json:"comments"`
 			} `json:"comment"`
-			IssueLinks []struct {
-				Type struct {
-					Inward  string `json:"inward"`
-					Outward string `json:"outward"`
-				} `json:"type"`
-				InwardIssue  *linkedIssue `json:"inwardIssue"`
-				OutwardIssue *linkedIssue `json:"outwardIssue"`
-			} `json:"issuelinks"`
+			IssueLinks []rawLink `json:"issuelinks"`
 		} `json:"fields"`
 	}
 	path := "/rest/api/3/issue/" + url.PathEscape(key) + "?fields=" + url.QueryEscape(fields)
@@ -290,7 +283,25 @@ func (c *Client) GetTicket(ctx context.Context, key string) (Ticket, error) {
 			Body:   fieldText(comment.Body),
 		})
 	}
-	for _, link := range raw.Fields.IssueLinks {
+	ticket.Links = links(raw.Fields.IssueLinks)
+	return ticket, nil
+}
+
+// rawLink is an issue link as Jira returns it.
+type rawLink struct {
+	Type struct {
+		Name    string `json:"name"`
+		Inward  string `json:"inward"`
+		Outward string `json:"outward"`
+	} `json:"type"`
+	InwardIssue  *linkedIssue `json:"inwardIssue"`
+	OutwardIssue *linkedIssue `json:"outwardIssue"`
+}
+
+// links reads each link from this ticket's side.
+func links(raw []rawLink) []Link {
+	var out []Link
+	for _, link := range raw {
 		relation, other := link.Type.Outward, link.OutwardIssue
 		if other == nil {
 			relation, other = link.Type.Inward, link.InwardIssue
@@ -298,14 +309,15 @@ func (c *Client) GetTicket(ctx context.Context, key string) (Ticket, error) {
 		if other == nil {
 			continue
 		}
-		ticket.Links = append(ticket.Links, Link{
+		out = append(out, Link{
+			Type:     link.Type.Name,
 			Relation: relation,
 			Key:      other.Key,
 			Summary:  other.Fields.Summary,
 			Status:   other.Fields.Status.Name,
 		})
 	}
-	return ticket, nil
+	return out
 }
 
 // linkedIssue is the other ticket in an issue link.
@@ -333,6 +345,43 @@ func (c *Client) Update(ctx context.Context, key string, r Refinement) error {
 		return err
 	}
 	return c.do(ctx, http.MethodPut, "/rest/api/2/issue/"+url.PathEscape(key), body, nil)
+}
+
+// Relate links two tickets with a Relates link, unless they are linked
+// already.
+func (c *Client) Relate(ctx context.Context, from, to string) error {
+	ticket, err := c.GetTicket(ctx, from)
+	if err != nil {
+		return err
+	}
+	if ticket.LinkedTo(to) {
+		return nil
+	}
+	body, err := json.Marshal(map[string]any{
+		"type":         map[string]string{"name": "Relates"},
+		"inwardIssue":  map[string]string{"key": from},
+		"outwardIssue": map[string]string{"key": to},
+	})
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPost, "/rest/api/2/issueLink", body, nil)
+}
+
+// LinkedTo reports whether the ticket has any link to key.
+func (t Ticket) LinkedTo(key string) bool {
+	for _, link := range t.Links {
+		if link.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// Refined reports whether the issue has its Acceptance Criteria and
+// Technical Implementation filled.
+func (i Issue) Refined() bool {
+	return strings.TrimSpace(i.AcceptanceCriteria) != "" && strings.TrimSpace(i.TechnicalImplementation) != ""
 }
 
 // Comment adds a comment to a ticket. Through v2 the body is wiki markup.
