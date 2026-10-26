@@ -42,6 +42,8 @@ type Store struct {
 	// Backup is the copy of the database made before an upgrade dropped the
 	// old tables, or "" when there was none.
 	Backup string
+	// Now is the clock; nil means time.Now.
+	Now func() time.Time
 }
 
 // Open opens or creates the database at path. A database from before
@@ -60,6 +62,14 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// now reads the store's clock.
+func (s *Store) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
 }
 
 // Close closes the database.
@@ -140,7 +150,7 @@ func (s *Store) All() ([]refine.Refinement, error) {
 // Save writes a refinement, replacing the ticket's earlier one.
 func (s *Store) Save(r refine.Refinement) error {
 	if r.Updated.IsZero() {
-		r.Updated = time.Now()
+		r.Updated = s.now()
 	}
 	state, err := json.Marshal(r)
 	if err != nil {
@@ -188,7 +198,7 @@ func (s *Store) SaveProfile(p refine.Profile) error {
 		return err
 	}
 	if p.Updated.IsZero() {
-		p.Updated = time.Now()
+		p.Updated = s.now()
 	}
 	data, err := json.Marshal(p)
 	if err != nil {

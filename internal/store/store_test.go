@@ -5,9 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/mlmejo/refine/internal/refine"
 )
+
+// now is the clock the tests give the store.
+var now = time.Date(2026, 10, 26, 9, 30, 0, 0, time.UTC)
 
 func TestSaveLoadAndDelete(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "refine.db"))
@@ -15,6 +19,7 @@ func TestSaveLoadAndDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	s.Now = func() time.Time { return now }
 	if s.Backup != "" {
 		t.Errorf("a new database was backed up to %s", s.Backup)
 	}
@@ -28,7 +33,7 @@ func TestSaveLoadAndDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, ok, err := s.Load("GEEK-1")
-	if err != nil || !ok || got.Step != refine.StepRepos || got.Repos[0] != "admin" || got.Updated.IsZero() {
+	if err != nil || !ok || got.Step != refine.StepRepos || got.Repos[0] != "admin" || !got.Updated.Equal(now) {
 		t.Fatalf("load = %+v %v %v", got, ok, err)
 	}
 	all, _ := s.All()
@@ -47,9 +52,10 @@ func TestProfiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	s.Now = func() time.Time { return now }
 	s.SaveProfile(refine.Profile{Repo: "admin", Answers: []refine.QA{{Question: "How?", Answer: "Forge"}}})
 	got, _ := s.Profiles()
-	if got["admin"].Answers[0].Answer != "Forge" {
+	if got["admin"].Answers[0].Answer != "Forge" || !got["admin"].Updated.Equal(now) {
 		t.Fatalf("profiles = %+v", got)
 	}
 	s.SaveProfile(refine.Profile{Repo: "admin"})
