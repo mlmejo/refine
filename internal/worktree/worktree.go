@@ -12,31 +12,26 @@ import (
 )
 
 // Checkout puts ref, a branch or a commit, into a detached worktree of repo
-// at dest and returns its commit. It prefers origin/<ref> over the local
-// branch.
-func Checkout(ctx context.Context, repo, ref, dest string) (string, error) {
+// at dest. It prefers origin/<ref> over the local branch.
+func Checkout(ctx context.Context, repo, ref, dest string) error {
 	commit, err := resolve(ctx, repo, ref)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	if _, err := os.Stat(filepath.Join(dest, ".git")); err == nil {
-		if _, err := gitcmd.Run(ctx, dest, "checkout", "--quiet", "--force", "--detach", commit); err != nil {
-			return "", err
-		}
-		return commit, nil
+		_, err := gitcmd.Run(ctx, dest, "checkout", "--quiet", "--force", "--detach", commit)
+		return err
 	}
 
 	if _, err := gitcmd.Run(ctx, repo, "worktree", "prune"); err != nil {
-		return "", err
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
-		return "", err
+		return err
 	}
-	if _, err := gitcmd.Run(ctx, repo, "worktree", "add", "--quiet", "--detach", dest, commit); err != nil {
-		return "", err
-	}
-	return commit, nil
+	_, err = gitcmd.Run(ctx, repo, "worktree", "add", "--quiet", "--detach", dest, commit)
+	return err
 }
 
 func resolve(ctx context.Context, repo, ref string) (string, error) {

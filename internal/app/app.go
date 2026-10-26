@@ -42,8 +42,7 @@ func (git) Fetch(ctx context.Context, name, dir string) gitsync.Status {
 }
 
 func (git) Checkout(ctx context.Context, repo, commit, dest string) error {
-	_, err := worktree.Checkout(ctx, repo, commit, dest)
-	return err
+	return worktree.Checkout(ctx, repo, commit, dest)
 }
 
 // Open reads the config and wires refine up.
