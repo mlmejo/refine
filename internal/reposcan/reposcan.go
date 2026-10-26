@@ -3,6 +3,8 @@
 package reposcan
 
 import (
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -31,11 +33,10 @@ type Found struct {
 // "work-api".
 func Scan(dir string, existing map[string]string) ([]Found, error) {
 	dir = filepath.Clean(dir)
-	if _, err := os.ReadDir(dir); err != nil {
+	dirs, err := repos(dir)
+	if err != nil {
 		return nil, err
 	}
-	var dirs []string
-	walk(dir, 0, &dirs)
 	slices.Sort(dirs)
 
 	listed := map[string]string{}
@@ -77,23 +78,40 @@ func IsRepo(dir string) bool {
 	return err == nil
 }
 
-func walk(dir string, depth int, out *[]string) {
-	if IsRepo(dir) {
-		*out = append(*out, dir)
-		return
-	}
-	if depth >= MaxDepth {
-		return
-	}
-	entries, err := os.ReadDir(dir)
+// repos lists the checkouts at or under dir, at most MaxDepth folders down.
+// It walks dir through os.DirFS so a dir that is a link to a folder is
+// followed; links below it are not.
+func repos(dir string) ([]string, error) {
+	info, err := os.Stat(dir)
 	if err != nil {
-		return
+		return nil, err
 	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if !entry.IsDir() || strings.HasPrefix(name, ".") || skip[name] {
-			continue
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%s is not a folder", dir)
+	}
+	var dirs []string
+	err = fs.WalkDir(os.DirFS(dir), ".", func(rel string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if rel == "." {
+				return err
+			}
+			return nil // unreadable: skip
 		}
-		walk(filepath.Join(dir, name), depth+1, out)
-	}
+		if !d.IsDir() {
+			return nil
+		}
+		if rel != "." && (strings.HasPrefix(d.Name(), ".") || skip[d.Name()]) {
+			return fs.SkipDir
+		}
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if IsRepo(p) {
+			dirs = append(dirs, p)
+			return fs.SkipDir
+		}
+		if rel != "." && strings.Count(rel, "/")+1 >= MaxDepth {
+			return fs.SkipDir
+		}
+		return nil
+	})
+	return dirs, err
 }
