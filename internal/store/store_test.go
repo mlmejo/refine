@@ -108,3 +108,21 @@ func TestUpgradeBacksUpThenDropsTheOldTables(t *testing.T) {
 		t.Errorf("backed up twice: %s", again.Backup)
 	}
 }
+
+func TestSaveStoresStateAsText(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "refine.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.Save(refine.New("GEEK-1", "Refunds")); err != nil {
+		t.Fatal(err)
+	}
+	var kind string
+	if err := s.db.QueryRow(`SELECT typeof(state) FROM refinements WHERE key = 'GEEK-1'`).Scan(&kind); err != nil {
+		t.Fatal(err)
+	}
+	if kind != "text" {
+		t.Fatalf("state stored as %s, want text", kind)
+	}
+}

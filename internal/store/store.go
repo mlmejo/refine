@@ -103,7 +103,7 @@ func (s *Store) migrate(path string) error {
 
 // Load returns a ticket's refinement, if it has one.
 func (s *Store) Load(key string) (refine.Refinement, bool, error) {
-	var state string
+	var state []byte
 	err := s.db.QueryRow(`SELECT state FROM refinements WHERE key = ?`, key).Scan(&state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return refine.Refinement{}, false, nil
@@ -112,7 +112,7 @@ func (s *Store) Load(key string) (refine.Refinement, bool, error) {
 		return refine.Refinement{}, false, err
 	}
 	var r refine.Refinement
-	return r, true, json.Unmarshal([]byte(state), &r)
+	return r, true, json.Unmarshal(state, &r)
 }
 
 // All returns every refinement, by key.
@@ -124,12 +124,12 @@ func (s *Store) All() ([]refine.Refinement, error) {
 	defer rows.Close()
 	var out []refine.Refinement
 	for rows.Next() {
-		var state string
+		var state []byte
 		if err := rows.Scan(&state); err != nil {
 			return nil, err
 		}
 		var r refine.Refinement
-		if err := json.Unmarshal([]byte(state), &r); err != nil {
+		if err := json.Unmarshal(state, &r); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -146,9 +146,10 @@ func (s *Store) Save(r refine.Refinement) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO refinements (key, state, updated) VALUES (?, ?, ?)
+	// Bytes bind as a BLOB; the CAST keeps state stored as TEXT.
+	_, err = s.db.Exec(`INSERT INTO refinements (key, state, updated) VALUES (?, CAST(? AS TEXT), ?)
 		ON CONFLICT (key) DO UPDATE SET state = excluded.state, updated = excluded.updated`,
-		r.Key, string(state), r.Updated.UTC().Format(time.RFC3339Nano))
+		r.Key, state, r.Updated.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
