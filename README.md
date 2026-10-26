@@ -19,6 +19,30 @@ Go decides everything with one right answer: which tickets to show, how many
 questions, the points, the Jira writes. Claude (`claude-opus-5-5`, run
 headless and read-only) only judges.
 
+## Screenshots
+
+The tickets in these are made up.
+
+The tickets in the refinement sprint, started ones on top:
+
+![The ticket list](docs/screenshots/tickets.png)
+
+Related: accept or reject the blockers Claude found.
+
+![Reviewing blockers](docs/screenshots/related.png)
+
+Claude reads the code before each round of questions:
+
+![Claude reading the code](docs/screenshots/working.png)
+
+Questions: pick an option, the recommended one, or write your own.
+
+![A round of questions](docs/screenshots/questions.png)
+
+Results: edit anything in place, then review and stamp.
+
+![The results](docs/screenshots/results.png)
+
 ## Requirements
 
 - macOS
