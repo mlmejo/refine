@@ -624,7 +624,11 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, out a
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		// Read to EOF so the connection is reused.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return responseError(resp)

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -570,5 +572,34 @@ func TestHasCommentIgnoresMarkup(t *testing.T) {
 	}
 	if ticket.HasComment("Blockers found.\n\n*Deploy*\n* Who sets {{KEY}}?\n** Still open\n") {
 		t.Fatal("changed comment found")
+	}
+}
+
+func TestDoReusesTheConnection(t *testing.T) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		// A body Comment ignores, and trailing bytes a decode stops before.
+		w.Write([]byte(`{"id":"1","displayName":"Mark"}` + strings.Repeat(" ", 8<<10)))
+	}))
+	var conns atomic.Int32
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	server.Start()
+	defer server.Close()
+
+	c := New(server.URL, "me", "t")
+	for range 3 {
+		if err := c.Comment(context.Background(), "GEEK-1", "hi"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.Myself(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := conns.Load(); n != 1 {
+		t.Errorf("connections = %d, want 1", n)
 	}
 }
