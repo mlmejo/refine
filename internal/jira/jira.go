@@ -140,6 +140,12 @@ func ListJQL(sprint string) string {
 	return fmt.Sprintf(`assignee = currentUser() AND resolution = Unresolved AND sprint = %s ORDER BY updated DESC`, quote(sprint))
 }
 
+// ReadyJQL lists the current user's unresolved tickets in the ready sprint,
+// leaving out epics, most recently updated first.
+func ReadyJQL(sprint string) string {
+	return fmt.Sprintf(`assignee = currentUser() AND resolution = Unresolved AND sprint = %s AND issuetype != Epic ORDER BY updated DESC`, quote(sprint))
+}
+
 // CandidatesJQL lists the current user's unresolved tickets in the given
 // sprints other than key: the tickets a blocker or overlap is looked for in.
 func CandidatesJQL(key string, sprints ...string) string {
@@ -161,7 +167,7 @@ func (c *Client) Search(ctx context.Context, jql string) ([]Issue, error) {
 }
 
 // Tickets runs a JQL query and returns the matching tickets with their
-// descriptions and links, but no comments or points.
+// descriptions, points and links, but no comments.
 func (c *Client) Tickets(ctx context.Context, jql string) ([]Ticket, error) {
 	return c.search(ctx, jql, "description", "issuelinks")
 }
@@ -177,7 +183,7 @@ func (c *Client) search(ctx context.Context, jql string, extra ...string) ([]Tic
 		"jql":        jql,
 		"maxResults": maxResults,
 		"fields": append([]string{
-			"summary", "status",
+			"summary", "status", FieldStoryPoints,
 			FieldAcceptanceCriteria, FieldTechnicalImplementation, FieldStoryPointCriteria,
 		}, extra...),
 	})
@@ -194,6 +200,7 @@ func (c *Client) search(ctx context.Context, jql string, extra ...string) ([]Tic
 					Name string `json:"name"`
 				} `json:"status"`
 				Description             json.RawMessage `json:"description"`
+				Points                  *float64        `json:"customfield_10026"`
 				AcceptanceCriteria      json.RawMessage `json:"customfield_10042"`
 				TechnicalImplementation json.RawMessage `json:"customfield_10043"`
 				StoryPointCriteria      json.RawMessage `json:"customfield_10284"`
@@ -217,6 +224,7 @@ func (c *Client) search(ctx context.Context, jql string, extra ...string) ([]Tic
 				StoryPointCriteria:      fieldText(raw.Fields.StoryPointCriteria),
 			},
 			Description: fieldText(raw.Fields.Description),
+			Points:      raw.Fields.Points,
 			Links:       links(raw.Fields.IssueLinks),
 		}
 		tickets = append(tickets, ticket)

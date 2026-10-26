@@ -21,9 +21,10 @@ export type Row = {
   blocked_by: string[] | null
   blocks: string[] | null
   updated?: string
+  points?: number | null
 }
 
-export type Page = { user: string; rows: Row[] | null }
+export type Page = { user: string; rows: Row[] | null; ready: Row[] | null }
 
 export type Step = 'related' | 'repos' | 'questions' | 'deploy' | 'results' | 'stamped'
 

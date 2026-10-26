@@ -91,16 +91,20 @@ type Row struct {
 	BlockedBy []string `json:"blocked_by"`
 	Blocks    []string `json:"blocks"`
 	Updated   string   `json:"updated,omitempty"`
+	Points    *float64 `json:"points,omitempty"`
 }
 
 // Page is the Tickets list.
 type Page struct {
 	User string `json:"user"`
 	Rows []Row  `json:"rows"`
+	// Ready are the tickets in the ready sprint, with their points.
+	Ready []Row `json:"ready"`
 }
 
 // List reads the unrefined tickets in the sprint: started ones first, then
-// the rest, each in Jira's order, with how they block one another.
+// the rest, each in Jira's order, with how they block one another. It also
+// reads the tickets already in the ready sprint.
 func (s *Service) List(ctx context.Context) (Page, error) {
 	user, err := s.Jira.Myself(ctx)
 	if err != nil {
@@ -162,7 +166,28 @@ func (s *Service) List(ctx context.Context) (Page, error) {
 		}
 		rest = append(rest, row)
 	}
-	return Page{User: user, Rows: append(started, rest...)}, nil
+	ready, err := s.ready(ctx)
+	if err != nil {
+		return Page{}, err
+	}
+	return Page{User: user, Rows: append(started, rest...), Ready: ready}, nil
+}
+
+// ready lists the developer's tickets in the ready sprint, in Jira's order.
+func (s *Service) ready(ctx context.Context) ([]Row, error) {
+	rows := []Row{}
+	if s.ReadySprint == "" || s.ReadySprint == s.Sprint {
+		return rows, nil
+	}
+	tickets, err := s.Jira.Linked(ctx, jira.ReadyJQL(s.ReadySprint))
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range tickets {
+		rows = append(rows, Row{Key: t.Key, Summary: t.Summary, Status: t.Status, Step: t.Status,
+			BlockedBy: []string{}, Blocks: []string{}, Points: t.Points})
+	}
+	return rows, nil
 }
 
 func sorted(keys []string) []string {

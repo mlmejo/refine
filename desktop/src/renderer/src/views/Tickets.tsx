@@ -53,13 +53,30 @@ function TicketRow({ row, cursor, onOpen, onHide }: { row: Row; cursor: boolean;
   )
 }
 
-// Tickets lists the unrefined tickets: started ones pinned on top.
+// ReadyRow is a ticket already in the ready sprint, with its points.
+function ReadyRow({ row, cursor, onOpen }: { row: Row; cursor: boolean; onOpen: () => void }) {
+  return (
+    <div role="button" tabIndex={-1} className={`ticket-row ${cursor ? 'cursor' : ''}`} onClick={onOpen}>
+      <span className="key">{row.key}</span>
+      <span className="title">{row.summary}</span>
+      <span className="points">{row.points ?? '–'}</span>
+    </div>
+  )
+}
+
+// sprintMinimum is the fewest points a sprint starts with.
+const sprintMinimum = 12
+
+// Tickets lists the unrefined tickets: started ones pinned on top, then the
+// ready sprint, then the rest.
 export function Tickets() {
   const refine = useRefine()
   const rows = useMemo(() => refine.page?.rows ?? [], [refine.page])
+  const ready = useMemo(() => refine.page?.ready ?? [], [refine.page])
   const started = rows.filter((r) => r.started)
   const rest = rows.filter((r) => !r.started)
-  const ordered = [...started, ...rest]
+  const ordered = [...started, ...ready, ...rest]
+  const points = ready.reduce((sum, r) => sum + (r.points ?? 0), 0)
   const [cursor, setCursor] = useState(0)
 
   useEffect(() => {
@@ -84,7 +101,7 @@ export function Tickets() {
   let index = 0
   const list = (title: string, items: Row[]) =>
     items.length > 0 && (
-      <>
+      <div className="list-group">
         <div className="list-head">
           {title} <span className="chip">{items.length}</span>
         </div>
@@ -94,14 +111,13 @@ export function Tickets() {
             <TicketRow key={row.key} row={row} cursor={i === cursor} onOpen={() => refine.open(row.key)} onHide={() => void hide(row.key)} />
           )
         })}
-      </>
+      </div>
     )
 
   return (
     <>
       <header className="topbar">
-        <h1>Tickets</h1>
-        <span className="muted">Unrefined, assigned to you</span>
+        <h1>{refine.page?.user ? `Tickets for ${refine.page.user}` : 'Tickets'}</h1>
         <button className="btn" style={{ marginLeft: 'auto' }} disabled={refine.loading} onClick={() => void refine.refresh()}>
           {refine.loading ? 'Refreshing…' : 'Refresh'}
         </button>
@@ -118,7 +134,21 @@ export function Tickets() {
         )}
         <div style={{ padding: '6px 0' }}>
           {list('Started', started)}
-          {list('Not started', rest)}
+          {refine.page && (
+            <div className="list-group">
+              <div className="list-head">
+                Sprint Ready <span className="chip">{ready.length}</span>
+                <span className={`chip ${points >= sprintMinimum ? 'green' : 'amber'}`} title={`${sprintMinimum} points minimum for a sprint`}>
+                  {points} / {sprintMinimum} pts
+                </span>
+              </div>
+              {ready.map((row) => {
+                const i = index++
+                return <ReadyRow key={row.key} row={row} cursor={i === cursor} onOpen={() => refine.open(row.key)} />
+              })}
+            </div>
+          )}
+          {list('Unrefined tickets', rest)}
         </div>
       </div>
       <footer className="footbar thin">

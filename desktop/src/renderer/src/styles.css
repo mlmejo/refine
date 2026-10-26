@@ -386,19 +386,26 @@ kbd {
 }
 
 /* Tickets list */
+/* Each section opens with a header bar that sticks to the top while its rows
+   scroll under it, and a gap sets it apart from the section above. */
 .list-head {
-  height: 30px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 34px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 0 20px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--raised);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
-.list-head + .list-head,
-.ticket-row + .list-head {
-  margin-top: 10px;
+.list-group + .list-group {
+  margin-top: 24px;
 }
 .ticket-row {
   height: 38px;
@@ -438,6 +445,13 @@ kbd {
   width: 36px;
   flex-shrink: 0;
   text-align: right;
+  font-size: 12px;
+}
+.ticket-row .points {
+  width: 36px;
+  flex-shrink: 0;
+  text-align: right;
+  font-family: var(--mono);
   font-size: 12px;
 }
 .ticket-row.started {

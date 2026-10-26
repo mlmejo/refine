@@ -19,6 +19,7 @@ import (
 type fakeJira struct {
 	tickets  map[string]jira.Ticket
 	list     []string
+	ready    []string
 	jqls     []string
 	writes   []string
 	failOn   string
@@ -28,8 +29,12 @@ type fakeJira struct {
 func (f *fakeJira) Myself(context.Context) (string, error) { return "Dev", nil }
 func (f *fakeJira) Linked(_ context.Context, jql string) ([]jira.Ticket, error) {
 	f.jqls = append(f.jqls, jql)
+	keys := f.list
+	if strings.Contains(jql, "Ready for Sprint") {
+		keys = f.ready
+	}
 	var out []jira.Ticket
-	for _, key := range f.list {
+	for _, key := range keys {
 		out = append(out, f.tickets[key])
 	}
 	return out, nil
@@ -588,6 +593,24 @@ func TestListPinsStartedTicketsAndShowsBlocking(t *testing.T) {
 	}
 	if !slices.Equal(got, want) || page.User != "Dev" {
 		t.Fatalf("rows = %q", got)
+	}
+}
+
+func TestListReadsTheReadySprintWithPoints(t *testing.T) {
+	s, j, _, _, _ := setup()
+	two := 2.0
+	j.tickets["GEEK-150"] = jira.Ticket{Issue: jira.Issue{Key: "GEEK-150", Summary: "Track", Status: "To Do"}, Points: &two}
+	j.tickets["GEEK-151"] = jira.Ticket{Issue: jira.Issue{Key: "GEEK-151", Summary: "SDK", Status: "To Do"}}
+	j.ready = []string{"GEEK-150", "GEEK-151"}
+	page, err := s.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Ready) != 2 || page.Ready[0].Key != "GEEK-150" || *page.Ready[0].Points != 2 || page.Ready[1].Points != nil {
+		t.Fatalf("ready = %+v", page.Ready)
+	}
+	if !slices.Contains(j.jqls, jira.ReadyJQL("Ready for Sprint - Team John")) {
+		t.Fatalf("jqls = %q", j.jqls)
 	}
 }
 
