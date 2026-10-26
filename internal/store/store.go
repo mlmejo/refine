@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -46,7 +47,7 @@ type Store struct {
 
 // Open opens or creates the database at path. A database from before
 // version 11 is copied next to it first, then its old tables are dropped.
-func Open(path string) (*Store, error) {
+func Open(ctx context.Context, path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
@@ -55,7 +56,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db}
-	if err := s.migrate(path); err != nil {
+	if err := s.migrate(ctx, path); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -67,9 +68,9 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func (s *Store) migrate(path string) error {
+func (s *Store) migrate(ctx context.Context, path string) error {
 	var current int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&current); err != nil {
+	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil {
 		return err
 	}
 	if current >= version {
@@ -77,34 +78,34 @@ func (s *Store) migrate(path string) error {
 	}
 	if current > 0 {
 		backup := fmt.Sprintf("%s.bak-%s", path, time.Now().Format("20060102-150405"))
-		if _, err := s.db.Exec(`VACUUM INTO ?`, backup); err != nil {
+		if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, backup); err != nil {
 			return fmt.Errorf("back up %s before upgrading it: %w", path, err)
 		}
 		s.Backup = backup
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	for _, table := range old {
-		if _, err := tx.Exec(`DROP TABLE IF EXISTS ` + table); err != nil {
+		if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS `+table); err != nil {
 			return err
 		}
 	}
-	if _, err := tx.Exec(schema); err != nil {
+	if _, err := tx.ExecContext(ctx, schema); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 // Load returns a ticket's refinement, if it has one.
-func (s *Store) Load(key string) (refine.Refinement, bool, error) {
+func (s *Store) Load(ctx context.Context, key string) (refine.Refinement, bool, error) {
 	var state string
-	err := s.db.QueryRow(`SELECT state FROM refinements WHERE key = ?`, key).Scan(&state)
+	err := s.db.QueryRowContext(ctx, `SELECT state FROM refinements WHERE key = ?`, key).Scan(&state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return refine.Refinement{}, false, nil
 	}
@@ -116,8 +117,8 @@ func (s *Store) Load(key string) (refine.Refinement, bool, error) {
 }
 
 // All returns every refinement, by key.
-func (s *Store) All() ([]refine.Refinement, error) {
-	rows, err := s.db.Query(`SELECT state FROM refinements ORDER BY key`)
+func (s *Store) All(ctx context.Context) ([]refine.Refinement, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT state FROM refinements ORDER BY key`)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +139,7 @@ func (s *Store) All() ([]refine.Refinement, error) {
 }
 
 // Save writes a refinement, replacing the ticket's earlier one.
-func (s *Store) Save(r refine.Refinement) error {
+func (s *Store) Save(ctx context.Context, r refine.Refinement) error {
 	if r.Updated.IsZero() {
 		r.Updated = time.Now()
 	}
@@ -146,21 +147,21 @@ func (s *Store) Save(r refine.Refinement) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO refinements (key, state, updated) VALUES (?, ?, ?)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO refinements (key, state, updated) VALUES (?, ?, ?)
 		ON CONFLICT (key) DO UPDATE SET state = excluded.state, updated = excluded.updated`,
 		r.Key, string(state), r.Updated.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
 // Delete forgets a ticket's refinement.
-func (s *Store) Delete(key string) error {
-	_, err := s.db.Exec(`DELETE FROM refinements WHERE key = ?`, key)
+func (s *Store) Delete(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM refinements WHERE key = ?`, key)
 	return err
 }
 
 // Profiles returns every repo's deployment profile, by repo.
-func (s *Store) Profiles() (map[string]refine.Profile, error) {
-	rows, err := s.db.Query(`SELECT profile FROM deploy_profiles`)
+func (s *Store) Profiles(ctx context.Context) (map[string]refine.Profile, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT profile FROM deploy_profiles`)
 	if err != nil {
 		return nil, err
 	}
@@ -182,9 +183,9 @@ func (s *Store) Profiles() (map[string]refine.Profile, error) {
 
 // SaveProfile writes a repo's deployment profile; one with no answers is
 // removed, so the repo is asked about again.
-func (s *Store) SaveProfile(p refine.Profile) error {
+func (s *Store) SaveProfile(ctx context.Context, p refine.Profile) error {
 	if len(p.Answers) == 0 {
-		_, err := s.db.Exec(`DELETE FROM deploy_profiles WHERE repo = ?`, p.Repo)
+		_, err := s.db.ExecContext(ctx, `DELETE FROM deploy_profiles WHERE repo = ?`, p.Repo)
 		return err
 	}
 	if p.Updated.IsZero() {
@@ -194,7 +195,7 @@ func (s *Store) SaveProfile(p refine.Profile) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO deploy_profiles (repo, profile, updated) VALUES (?, ?, ?)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO deploy_profiles (repo, profile, updated) VALUES (?, ?, ?)
 		ON CONFLICT (repo) DO UPDATE SET profile = excluded.profile, updated = excluded.updated`,
 		p.Repo, string(data), p.Updated.UTC().Format(time.RFC3339Nano))
 	return err

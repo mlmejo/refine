@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -89,11 +88,13 @@ func (r Runner) Do(ctx context.Context, call Call, into any, progress func(Activ
 	if ctx.Err() != nil {
 		return Run{}, ctx.Err()
 	}
-	if result == nil {
+	// A read error fails the run even after a result: the stream was cut
+	// short, so the result may not be the last word.
+	if result == nil || readErr != nil {
 		if readErr == nil {
 			readErr = waitErr
 		}
-		return Run{}, fmt.Errorf("claude: %v: %s", readErr, strings.TrimSpace(stderr.String()))
+		return Run{}, fmt.Errorf("claude: %w: %s", readErr, strings.TrimSpace(stderr.String()))
 	}
 	return decode(*result, into)
 }
@@ -225,7 +226,7 @@ func decode(r result, into any) (Run, error) {
 		if msg == "" {
 			msg = "no structured output returned"
 		}
-		return Run{}, errors.New("claude " + r.Subtype + ": " + msg)
+		return Run{}, fmt.Errorf("claude %s: %s", r.Subtype, msg)
 	}
 	if err := json.Unmarshal(r.StructuredOutput, into); err != nil {
 		return Run{}, fmt.Errorf("claude structured output: %w", err)
