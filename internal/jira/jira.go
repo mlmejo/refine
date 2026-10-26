@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -679,6 +681,23 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, out a
 	return nil
 }
 
+// APIError is a response from Jira outside 2xx. Check for it with errors.As
+// to tell a missing ticket (404) from a bad token (401) or a rate limit (429).
+type APIError struct {
+	StatusCode int
+	// Messages are Jira's error messages, then its field errors in field
+	// order, so the text is the same on every run.
+	Messages []string
+}
+
+func (e *APIError) Error() string {
+	status := fmt.Sprintf("%d %s", e.StatusCode, http.StatusText(e.StatusCode))
+	if len(e.Messages) == 0 {
+		return "jira: " + status
+	}
+	return "jira: " + status + ": " + strings.Join(e.Messages, "; ")
+}
+
 func responseError(resp *http.Response) error {
 	var body struct {
 		ErrorMessages []string          `json:"errorMessages"`
@@ -688,13 +707,10 @@ func responseError(resp *http.Response) error {
 	_ = json.Unmarshal(data, &body)
 
 	messages := body.ErrorMessages
-	for _, msg := range body.Errors {
-		messages = append(messages, msg)
+	for _, field := range slices.Sorted(maps.Keys(body.Errors)) {
+		messages = append(messages, body.Errors[field])
 	}
-	if len(messages) == 0 {
-		return fmt.Errorf("jira: %s", resp.Status)
-	}
-	return fmt.Errorf("jira: %s: %s", resp.Status, strings.Join(messages, "; "))
+	return &APIError{StatusCode: resp.StatusCode, Messages: messages}
 }
 
 func quote(s string) string {
