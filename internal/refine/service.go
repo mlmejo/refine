@@ -74,6 +74,8 @@ type Service struct {
 	// (ac.md) and Technical Implementation (ti.md). Empty, or a missing file,
 	// means the defaults.
 	FormatDir string
+	// Now is the clock; nil means time.Now.
+	Now func() time.Time
 
 	// mu keeps a refinement's read-change-save from racing another.
 	mu sync.Mutex
@@ -303,6 +305,14 @@ func (s *Service) suggested(r Refinement) []SuggestedRepo {
 	return out
 }
 
+// now reads the service's clock.
+func (s *Service) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
+}
+
 // update loads a refinement, lets change edit it, and saves it.
 func (s *Service) update(key string, change func(*Refinement) error) (Refinement, error) {
 	s.mu.Lock()
@@ -317,7 +327,7 @@ func (s *Service) update(key string, change func(*Refinement) error) (Refinement
 	if err := change(&r); err != nil {
 		return Refinement{}, err
 	}
-	r.Updated = time.Now()
+	r.Updated = s.now()
 	return r, s.Store.Save(r)
 }
 
@@ -395,7 +405,7 @@ func (s *Service) Search(ctx context.Context, key, explanation string, progress 
 	defer s.mu.Unlock()
 	r.Summary, r.Related = t.Summary, related
 	r.CostUSD += run.CostUSD
-	r.Updated = time.Now()
+	r.Updated = s.now()
 	return r, s.Store.Save(r)
 }
 
@@ -887,7 +897,7 @@ func (s *Service) Generate(ctx context.Context, key string, progress func(claude
 		byRepo[q.Repo] = append(byRepo[q.Repo], QA{Question: q.Text, Answer: q.Answer})
 	}
 	for _, name := range slices.Sorted(maps.Keys(byRepo)) {
-		if err := s.Store.SaveProfile(Profile{Repo: name, Answers: byRepo[name], Updated: time.Now()}); err != nil {
+		if err := s.Store.SaveProfile(Profile{Repo: name, Answers: byRepo[name], Updated: s.now()}); err != nil {
 			return Refinement{}, err
 		}
 	}
@@ -1164,6 +1174,6 @@ func (s *Service) SetProfile(p Profile) error {
 			answers = append(answers, qa)
 		}
 	}
-	p.Answers, p.Updated = answers, time.Now()
+	p.Answers, p.Updated = answers, s.now()
 	return s.Store.SaveProfile(p)
 }
