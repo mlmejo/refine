@@ -581,22 +581,23 @@ func (s *Service) Sync(ctx context.Context, key string) (Refinement, error) {
 		return Refinement{}, errors.New("pick at least one repo")
 	}
 	configured := s.Repos()
-	statuses := make([]gitsync.Status, len(r.Repos))
+	synced := make([]Synced, len(r.Repos))
 	var wg sync.WaitGroup
 	for i, name := range r.Repos {
 		wg.Go(func() {
 			dir, ok := configured[name]
 			if !ok {
-				statuses[i] = gitsync.Status{Name: name, Error: "no longer in the config"}
+				synced[i] = Synced{Repo: name, Error: "no longer in the config"}
 				return
 			}
-			statuses[i] = s.Git.Fetch(ctx, name, dir)
+			st := s.Git.Fetch(ctx, name, dir)
+			synced[i] = Synced{Repo: name, Branch: st.Branch, Commit: st.Commit, New: st.New, Error: st.Error}
 		})
 	}
 	wg.Wait()
 	return s.update(key, func(r *Refinement) error {
-		r.Synced = statuses
-		if !slices.ContainsFunc(statuses, func(st gitsync.Status) bool { return st.Error != "" }) {
+		r.Synced = synced
+		if !slices.ContainsFunc(synced, func(st Synced) bool { return st.Error != "" }) {
 			r.Step = StepQuestions
 		}
 		return nil

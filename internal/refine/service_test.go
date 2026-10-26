@@ -285,7 +285,7 @@ func TestSyncBlocksOnAFailedFetch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Step != StepRepos || len(r.Synced) != 2 || r.Synced[0].Name != "admin" || r.Synced[0].Error == "" {
+	if r.Step != StepRepos || len(r.Synced) != 2 || r.Synced[0].Repo != "admin" || r.Synced[1].Commit != "abc123dating-backend" || r.Synced[1].New != 2 || r.Synced[0].Error == "" {
 		t.Fatalf("blocked sync = %+v", r)
 	}
 	g.fail["admin"] = false
@@ -752,5 +752,23 @@ func TestSuggestOnlyAtTheReposStep(t *testing.T) {
 	s.Search(ctx, "GEEK-101", "", nil)
 	if _, err := s.Suggest(ctx, "GEEK-101"); !errors.Is(err, ErrStep) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestSyncedReadsRecordsSavedBeforeItHadItsOwnType(t *testing.T) {
+	var r Refinement
+	saved := `{"key":"GEEK-1","synced":[{"name":"admin","dir":"/src/admin","branch":"develop","commit":"abc","new":2},{"name":"api","dir":"","branch":"","commit":"","new":0,"error":"no origin"}]}`
+	if err := json.Unmarshal([]byte(saved), &r); err != nil {
+		t.Fatal(err)
+	}
+	want := []Synced{{Repo: "admin", Branch: "develop", Commit: "abc", New: 2}, {Repo: "api", Error: "no origin"}}
+	if !slices.Equal(r.Synced, want) {
+		t.Fatalf("synced = %+v", r.Synced)
+	}
+	if s, ok := r.Commit("admin"); !ok || s.Commit != "abc" {
+		t.Fatalf("commit = %+v %v", s, ok)
+	}
+	if _, ok := r.Commit("api"); ok {
+		t.Fatal("failed sync has a commit")
 	}
 }

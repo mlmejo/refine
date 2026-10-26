@@ -48,7 +48,7 @@ export type Related = {
   waiting?: string[] | null
 }
 
-export type Synced = { name: string; dir: string; branch: string; commit: string; new: number; error?: string }
+export type Synced = { name: string; branch: string; commit: string; new: number; error?: string }
 
 export type Question = {
   text: string

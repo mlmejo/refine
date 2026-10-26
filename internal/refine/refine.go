@@ -10,8 +10,6 @@ import (
 	"math"
 	"strings"
 	"time"
-
-	"github.com/mlmejo/refine/internal/gitsync"
 )
 
 // Step is where a refinement is.
@@ -46,8 +44,8 @@ type Refinement struct {
 	Related Related `json:"related"`
 	// Repos are the repos the developer picked for this ticket, and Synced
 	// each one as fetched: the branch and commit Claude reads.
-	Repos  []string         `json:"repos"`
-	Synced []gitsync.Status `json:"synced"`
+	Repos  []string `json:"repos"`
+	Synced []Synced `json:"synced"`
 	// Suggestion is the repos Claude matched to the ticket's title and
 	// labels, nil until asked.
 	Suggestion *Suggestion `json:"suggestion,omitempty"`
@@ -64,6 +62,17 @@ type Refinement struct {
 // New starts a refinement of a ticket.
 func New(key, summary string) Refinement {
 	return Refinement{Key: key, Summary: summary, Step: StepRelated}
+}
+
+// Synced is one repo as last fetched: the branch and commit Claude reads,
+// how many commits were new, or why the fetch failed. Repo keeps the "name"
+// key of the records saved before it had its own type.
+type Synced struct {
+	Repo   string `json:"name"`
+	Branch string `json:"branch"`
+	Commit string `json:"commit"`
+	New    int    `json:"new"`
+	Error  string `json:"error,omitempty"`
 }
 
 // Related is what the search for related tickets found, and the developer's
@@ -353,11 +362,11 @@ func (r Refinement) Label() string {
 }
 
 // Commit is the commit Claude reads in a repo, from the last sync.
-func (r Refinement) Commit(repo string) (gitsync.Status, bool) {
+func (r Refinement) Commit(repo string) (Synced, bool) {
 	for _, s := range r.Synced {
-		if s.Name == repo && s.Error == "" && s.Commit != "" {
+		if s.Repo == repo && s.Error == "" && s.Commit != "" {
 			return s, true
 		}
 	}
-	return gitsync.Status{}, false
+	return Synced{}, false
 }
