@@ -22,6 +22,12 @@ var relatedRules string
 //go:embed prompts/related.schema.json
 var relatedSchema string
 
+//go:embed prompts/suggest.md
+var suggestRules string
+
+//go:embed prompts/suggest.schema.json
+var suggestSchema string
+
 //go:embed prompts/questions.md
 var questionsText string
 
@@ -73,7 +79,7 @@ func withWriteup(rules, writeup string) string {
 // refinement can be traced to the prompts that made it.
 func PromptsVersion() string {
 	h := sha256.New()
-	for _, part := range []string{relatedRules, relatedSchema, questionsRules, questionsSchema, deployRules, deploySchema, generateText, generateSchema, rewriteText, rewriteSchema, DefaultWriteup} {
+	for _, part := range []string{relatedRules, relatedSchema, suggestRules, suggestSchema, questionsRules, questionsSchema, deployRules, deploySchema, generateText, generateSchema, rewriteText, rewriteSchema, DefaultWriteup} {
 		h.Write([]byte(part))
 		h.Write([]byte{0})
 	}
@@ -134,6 +140,24 @@ func relatedPrompt(t jira.Ticket, candidates []jira.Ticket, explanations []strin
 		}
 	}
 	out.WriteString("\nFind the blockers and overlaps as your instructions say.\n")
+	return out.String()
+}
+
+// suggestPrompt asks which of the repos the ticket's title and labels point
+// at.
+func suggestPrompt(t jira.Ticket, repos []string) string {
+	var out strings.Builder
+	fmt.Fprintf(&out, "Ticket %s: %s\n", t.Key, t.Summary)
+	labels := "none"
+	if len(t.Labels) > 0 {
+		labels = strings.Join(t.Labels, ", ")
+	}
+	fmt.Fprintf(&out, "Labels: %s.\n", labels)
+	out.WriteString("\nRepos:\n")
+	for _, name := range repos {
+		fmt.Fprintf(&out, "- %s\n", name)
+	}
+	out.WriteString("\nSuggest the repos as your instructions say.\n")
 	return out.String()
 }
 

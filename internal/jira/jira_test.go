@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -117,7 +118,7 @@ func TestGetTicketReadsDescriptionPointsCommentsAndLinks(t *testing.T) {
 		if r.URL.Path != "/rest/api/3/issue/GEEK-7" {
 			t.Errorf("path = %s", r.URL.Path)
 		}
-		if fields := r.URL.Query().Get("fields"); !strings.Contains(fields, "comment") || !strings.Contains(fields, FieldStoryPoints) {
+		if fields := r.URL.Query().Get("fields"); !strings.Contains(fields, "comment") || !strings.Contains(fields, "labels") || !strings.Contains(fields, FieldStoryPoints) {
 			t.Errorf("fields = %q", fields)
 		}
 		w.Write([]byte(`{"key":"GEEK-7","fields":{
@@ -129,6 +130,7 @@ func TestGetTicketReadsDescriptionPointsCommentsAndLinks(t *testing.T) {
 				{"type":"paragraph","content":[{"type":"text","text":"APIs cannot talk to StarVault"}]}
 			]},
 			"parent":{"key":"GEEK-1"},
+			"labels":["Dating_Brands","SDK"],
 			"customfield_10026":5,
 			"customfield_10284":"Total: High",
 			"comment":{"comments":[{"author":{"displayName":"PO"},"body":{"type":"doc","content":[
@@ -154,6 +156,9 @@ func TestGetTicketReadsDescriptionPointsCommentsAndLinks(t *testing.T) {
 	}
 	if ticket.Parent != "GEEK-1" {
 		t.Errorf("parent = %q", ticket.Parent)
+	}
+	if !slices.Equal(ticket.Labels, []string{"Dating_Brands", "SDK"}) {
+		t.Errorf("labels = %q", ticket.Labels)
 	}
 	if ticket.Points == nil || *ticket.Points != 5 || ticket.StoryPointCriteria != "Total: High" {
 		t.Errorf("points = %v criteria = %q", ticket.Points, ticket.StoryPointCriteria)

@@ -33,6 +33,7 @@ export const api = {
     call<View>('PUT', `${ticket(k)}/decisions`, { blocker, decision }),
   proceed: (k: string) => call<View>('POST', `${ticket(k)}/continue`),
   setRepos: (k: string, repos: string[]) => call<View>('PUT', `${ticket(k)}/repos`, { repos }),
+  suggestRepos: (k: string) => call<View>('POST', `${ticket(k)}/suggestion`),
   sync: (k: string) => call<View>('POST', `${ticket(k)}/sync`),
   chooseRepos: (k: string) => call<View>('DELETE', `${ticket(k)}/sync`),
   restartQuestions: (k: string) => call<View>('DELETE', `${ticket(k)}/rounds`),

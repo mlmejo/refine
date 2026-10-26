@@ -34,6 +34,8 @@ const (
 	// MaxRepoQuestions caps the one-time questions about how one repo deploys.
 	MaxRepoQuestions = 3
 	MaxOptions       = 4
+	// MaxSuggestedRepos caps the repos Claude suggests from the ticket.
+	MaxSuggestedRepos = 5
 )
 
 // Refinement is one ticket's refinement as far as it has got.
@@ -46,6 +48,9 @@ type Refinement struct {
 	// each one as fetched: the branch and commit Claude reads.
 	Repos  []string         `json:"repos"`
 	Synced []gitsync.Status `json:"synced"`
+	// Suggestion is the repos Claude matched to the ticket's title and
+	// labels, nil until asked.
+	Suggestion *Suggestion `json:"suggestion,omitempty"`
 	// Rounds are the question rounds, all in one Claude session.
 	Rounds          []Round   `json:"rounds"`
 	QuestionSession string    `json:"question_session,omitempty"`
@@ -73,6 +78,18 @@ type Related struct {
 	// Waiting are the accepted blockers that were not refined when last
 	// checked in Jira.
 	Waiting []string `json:"waiting,omitempty"`
+}
+
+// Suggestion is the repos Claude thinks the ticket touches, most likely
+// first.
+type Suggestion struct {
+	Repos []SuggestedRepo `json:"repos"`
+}
+
+// SuggestedRepo is a repo suggested for the ticket, and why.
+type SuggestedRepo struct {
+	Repo   string `json:"repo"`
+	Reason string `json:"reason"`
 }
 
 // Decisions on a blocker.

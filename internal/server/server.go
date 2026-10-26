@@ -87,6 +87,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/tickets/{key}/decisions", s.decide)
 	mux.HandleFunc("POST /api/tickets/{key}/continue", s.continue_)
 	mux.HandleFunc("PUT /api/tickets/{key}/repos", s.setRepos)
+	mux.HandleFunc("POST /api/tickets/{key}/suggestion", s.suggest)
 	mux.HandleFunc("DELETE /api/tickets/{key}/sync", s.chooseRepos)
 	mux.HandleFunc("POST /api/tickets/{key}/sync", s.sync)
 	mux.HandleFunc("PUT /api/tickets/{key}/answers", s.answers)
@@ -286,6 +287,12 @@ func (s *Server) setRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	key := r.PathValue("key")
 	_, err := s.Service.SetRepos(key, body.Repos)
+	s.describe(w, key, err)
+}
+
+func (s *Server) suggest(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	_, err := s.Service.Suggest(r.Context(), key)
 	s.describe(w, key, err)
 }
 

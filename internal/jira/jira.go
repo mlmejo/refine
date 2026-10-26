@@ -48,6 +48,7 @@ type Ticket struct {
 	// Parent is the epic or parent ticket's key, empty when it has none.
 	Parent   string
 	Points   *float64
+	Labels   []string
 	Comments []Comment
 	Links    []Link
 }
@@ -226,7 +227,7 @@ func (c *Client) search(ctx context.Context, jql string, extra ...string) ([]Tic
 // GetTicket reads one ticket with its description, points and comments.
 func (c *Client) GetTicket(ctx context.Context, key string) (Ticket, error) {
 	fields := strings.Join([]string{
-		"summary", "status", "description", "comment", "issuelinks", "parent", FieldStoryPoints,
+		"summary", "status", "description", "labels", "comment", "issuelinks", "parent", FieldStoryPoints,
 		FieldAcceptanceCriteria, FieldTechnicalImplementation, FieldStoryPointCriteria,
 	}, ",")
 
@@ -238,6 +239,7 @@ func (c *Client) GetTicket(ctx context.Context, key string) (Ticket, error) {
 				Name string `json:"name"`
 			} `json:"status"`
 			Description json.RawMessage `json:"description"`
+			Labels      []string        `json:"labels"`
 			Parent      *struct {
 				Key string `json:"key"`
 			} `json:"parent"`
@@ -273,6 +275,7 @@ func (c *Client) GetTicket(ctx context.Context, key string) (Ticket, error) {
 		Description:         fieldText(raw.Fields.Description),
 		DescriptionMarkdown: fieldMarkdown(raw.Fields.Description),
 		Points:              raw.Fields.Points,
+		Labels:              raw.Fields.Labels,
 	}
 	if raw.Fields.Parent != nil {
 		ticket.Parent = raw.Fields.Parent.Key

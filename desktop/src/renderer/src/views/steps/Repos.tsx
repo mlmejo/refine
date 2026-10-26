@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../../api'
 import { useRefine } from '../../store'
 import type { Repo, View } from '../../types'
 import { Icon } from '../Icon'
 
 // Repos picks the repos Claude reads for this ticket, then fetches each from
-// origin. A repo that cannot be fetched blocks the next step. Looked back at
+// origin. Repos used by related tickets, and those Claude matches to the
+// ticket's title and labels, are suggested at the top. A repo that cannot be fetched blocks the next step. Looked back at
 // from a later step, the repos can be picked again, which drops what Claude
 // read from them.
 export function Repos({ view, readOnly }: { view: View; readOnly: boolean }) {
@@ -18,11 +19,22 @@ export function Repos({ view, readOnly }: { view: View; readOnly: boolean }) {
   const [all, setAll] = useState<Repo[]>()
   const [filter, setFilter] = useState('')
   const [confirming, setConfirming] = useState(false)
-  const { setError } = refine
+  const [suggestError, setSuggestError] = useState<string>()
+  const asked = useRef<string>(undefined)
+  const { setError, keep } = refine
 
   useEffect(() => {
     api.repos().then(setAll, (err) => setError(key, (err as Error).message))
   }, [key, setError])
+
+  // Claude suggests repos once, on reaching this step. A failed suggestion
+  // only leaves the list without it.
+  const suggesting = !readOnly && r.step === 'repos' && !r.suggestion && !suggestError
+  useEffect(() => {
+    if (!suggesting || asked.current === key) return
+    asked.current = key
+    api.suggestRepos(key).then(keep, (err) => setSuggestError((err as Error).message))
+  }, [suggesting, key, keep])
 
   const toggle = (name: string) => {
     const next = picked.includes(name) ? picked.filter((n) => n !== name) : [...picked, name]
@@ -50,8 +62,8 @@ export function Repos({ view, readOnly }: { view: View; readOnly: boolean }) {
   })
 
   const matches = (name: string) => name.toLowerCase().includes(filter.trim().toLowerCase())
-  const top = suggested.filter(matches)
-  const rest = (all ?? []).map((a) => a.name).filter((n) => !suggested.includes(n) && matches(n))
+  const top = suggested.filter((s) => matches(s.repo))
+  const rest = (all ?? []).map((a) => a.name).filter((n) => !suggested.some((s) => s.repo === n) && matches(n))
   const branchOf = (name: string) => synced.find((s) => s.name === name)
 
   const pick = (name: string, note?: string) => (
@@ -82,12 +94,22 @@ export function Repos({ view, readOnly }: { view: View; readOnly: boolean }) {
                   <Icon name="search" className="muted" />
                   <input aria-label="Filter repos" placeholder={`Filter ${all?.length ?? ''} repos`} value={filter} onChange={(e) => setFilter(e.target.value)} />
                 </div>
-                {top.length > 0 && (
+                {(top.length > 0 || suggesting || suggestError) && (
                   <div className="stack" style={{ gap: 1 }}>
                     <span className="nav-label" style={{ padding: '6px 10px 0' }}>
-                      Used by related tickets
+                      Suggested
                     </span>
-                    {top.map((n) => pick(n, 'used by a related ticket'))}
+                    {top.map((s) => pick(s.repo, s.reason))}
+                    {suggesting && (
+                      <span className="row muted small" style={{ padding: '6px 10px' }}>
+                        <span className="spinner" /> Claude is matching repos to the title and labels…
+                      </span>
+                    )}
+                    {suggestError && (
+                      <span className="muted small" style={{ padding: '6px 10px' }}>
+                        Claude could not suggest repos: {suggestError}
+                      </span>
+                    )}
                   </div>
                 )}
                 <div className="stack" style={{ gap: 1 }}>

@@ -176,12 +176,12 @@ func sorted(keys []string) []string {
 
 // View is a ticket with its refinement.
 type View struct {
-	Refinement Refinement `json:"refinement"`
-	Ticket     TicketInfo `json:"ticket"`
-	Started    bool       `json:"started"`
-	Suggested  []string   `json:"suggested_repos"`
-	Profiles   []Profile  `json:"profiles"`
-	Plan       []Action   `json:"stamp_plan"`
+	Refinement Refinement      `json:"refinement"`
+	Ticket     TicketInfo      `json:"ticket"`
+	Started    bool            `json:"started"`
+	Suggested  []SuggestedRepo `json:"suggested_repos"`
+	Profiles   []Profile       `json:"profiles"`
+	Plan       []Action        `json:"stamp_plan"`
 }
 
 // TicketInfo is the ticket as Jira has it, for the app to show.
@@ -238,8 +238,9 @@ func (s *Service) view(t jira.Ticket, r Refinement, started bool) (View, error) 
 	return v, nil
 }
 
-// suggested are the repos picked for the tickets this one relates to.
-func (s *Service) suggested(r Refinement) []string {
+// suggested are the repos picked for the tickets this one relates to, then
+// those Claude matched to the ticket's title and labels.
+func (s *Service) suggested(r Refinement) []SuggestedRepo {
 	var keys []string
 	for _, b := range r.Related.Blockers {
 		if b.Decision != Rejected {
@@ -249,19 +250,30 @@ func (s *Service) suggested(r Refinement) []string {
 	for _, o := range r.Related.Overlaps {
 		keys = append(keys, o.Key)
 	}
-	var out []string
+	var related []string
 	for _, key := range keys {
 		other, ok, err := s.Store.Load(key)
 		if err != nil || !ok {
 			continue
 		}
 		for _, repo := range other.Repos {
-			if !slices.Contains(out, repo) {
-				out = append(out, repo)
+			if !slices.Contains(related, repo) {
+				related = append(related, repo)
 			}
 		}
 	}
-	slices.Sort(out)
+	slices.Sort(related)
+	var out []SuggestedRepo
+	for _, repo := range related {
+		out = append(out, SuggestedRepo{Repo: repo, Reason: "used by a related ticket"})
+	}
+	if r.Suggestion != nil {
+		for _, sr := range r.Suggestion.Repos {
+			if !slices.Contains(related, sr.Repo) {
+				out = append(out, sr)
+			}
+		}
+	}
 	return out
 }
 
@@ -453,6 +465,58 @@ func (s *Service) SetRepos(key string, repos []string) (Refinement, error) {
 		}
 		r.Repos = slices.Sorted(slices.Values(slices.Compact(slices.Sorted(slices.Values(repos)))))
 		r.Synced = nil
+		return nil
+	})
+}
+
+// Suggest asks Claude which configured repos the ticket's title and labels
+// point at, once per refinement. Claude reads only the repos' names.
+func (s *Service) Suggest(ctx context.Context, key string) (Refinement, error) {
+	s.mu.Lock()
+	r, ok, err := s.Store.Load(key)
+	s.mu.Unlock()
+	if err != nil {
+		return Refinement{}, err
+	}
+	if !ok || r.Step != StepRepos {
+		return Refinement{}, fmt.Errorf("suggest repos: %w", ErrStep)
+	}
+	if r.Suggestion != nil {
+		return r, nil
+	}
+	repos := slices.Sorted(maps.Keys(s.Repos()))
+	suggestion := Suggestion{Repos: []SuggestedRepo{}}
+	var cost float64
+	if len(repos) > 0 {
+		t, err := s.Jira.GetTicket(ctx, key)
+		if err != nil {
+			return Refinement{}, err
+		}
+		var out struct {
+			Repos []SuggestedRepo `json:"repos"`
+		}
+		run, err := s.Claude.Do(ctx, claude.Call{
+			Prompt: suggestPrompt(t, repos),
+			Rules:  suggestRules,
+			Schema: suggestSchema,
+		}, &out, nil)
+		if err != nil {
+			return Refinement{}, err
+		}
+		cost = run.CostUSD
+		for _, sr := range out.Repos {
+			if !slices.Contains(repos, sr.Repo) || slices.ContainsFunc(suggestion.Repos, func(o SuggestedRepo) bool { return o.Repo == sr.Repo }) {
+				continue
+			}
+			suggestion.Repos = append(suggestion.Repos, SuggestedRepo{Repo: sr.Repo, Reason: strings.TrimSpace(sr.Reason)})
+			if len(suggestion.Repos) == MaxSuggestedRepos {
+				break
+			}
+		}
+	}
+	return s.update(key, func(r *Refinement) error {
+		r.Suggestion = &suggestion
+		r.CostUSD += cost
 		return nil
 	})
 }

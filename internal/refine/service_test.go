@@ -677,3 +677,58 @@ func TestRejectingABlockerFoundInTheCodeCarriesOn(t *testing.T) {
 		t.Fatalf("after rejecting: %+v %v", r, err)
 	}
 }
+
+func TestSuggestMatchesTitleAndLabelsToRepoNamesOnce(t *testing.T) {
+	s, j, c, st, _ := setup()
+	toRepos(t, s, c)
+	tk := j.tickets["GEEK-101"]
+	tk.Labels = []string{"Dating_Brands"}
+	j.tickets["GEEK-101"] = tk
+	c.answers = []any{map[string]any{"repos": []map[string]string{
+		{"repo": "admin", "reason": " title names the admin page "},
+		{"repo": "nope", "reason": "made up"},
+		{"repo": "admin", "reason": "again"},
+		{"repo": "dating-backend", "reason": "label Dating_Brands"},
+	}}}
+	ctx := context.Background()
+	r, err := s.Suggest(ctx, "GEEK-101")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []SuggestedRepo{{Repo: "admin", Reason: "title names the admin page"}, {Repo: "dating-backend", Reason: "label Dating_Brands"}}
+	if r.Suggestion == nil || !slices.Equal(r.Suggestion.Repos, want) {
+		t.Fatalf("suggestion = %+v", r.Suggestion)
+	}
+	call := c.calls[len(c.calls)-1]
+	if len(call.Repos) != 0 || !strings.Contains(call.Prompt, "Labels: Dating_Brands.") || !strings.Contains(call.Prompt, "- admin\n- costs\n- dating-backend\n") {
+		t.Errorf("prompt = %s", call.Prompt)
+	}
+	if strings.Contains(call.Prompt, "description") {
+		t.Errorf("prompt has the description: %s", call.Prompt)
+	}
+	calls := len(c.calls)
+	if _, err := s.Suggest(ctx, "GEEK-101"); err != nil || len(c.calls) != calls {
+		t.Fatalf("asked again: %v, %d calls", err, len(c.calls))
+	}
+
+	// A repo a related ticket picked comes first and is not repeated.
+	st.refinements["GEEK-100"] = Refinement{Key: "GEEK-100", Repos: []string{"dating-backend"}}
+	v, err := s.Describe("GEEK-101")
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged := []SuggestedRepo{{Repo: "dating-backend", Reason: "used by a related ticket"}, {Repo: "admin", Reason: "title names the admin page"}}
+	if !slices.Equal(v.Suggested, merged) {
+		t.Errorf("suggested = %+v", v.Suggested)
+	}
+}
+
+func TestSuggestOnlyAtTheReposStep(t *testing.T) {
+	s, _, c, _, _ := setup()
+	c.answers = []any{related}
+	ctx := context.Background()
+	s.Search(ctx, "GEEK-101", "", nil)
+	if _, err := s.Suggest(ctx, "GEEK-101"); !errors.Is(err, ErrStep) {
+		t.Fatalf("err = %v", err)
+	}
+}

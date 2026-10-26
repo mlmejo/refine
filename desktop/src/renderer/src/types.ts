@@ -104,6 +104,7 @@ export type Refinement = {
   related: Related
   repos: string[] | null
   synced: Synced[] | null
+  suggestion?: { repos: SuggestedRepo[] | null } | null
   rounds: { questions: Question[] }[] | null
   deploy?: Deploy | null
   result?: Result | null
@@ -131,7 +132,7 @@ export type View = {
   refinement: Refinement
   ticket: TicketInfo
   started: boolean
-  suggested_repos: string[] | null
+  suggested_repos: SuggestedRepo[] | null
   profiles: Profile[] | null
   stamp_plan: Action[] | null
 }
@@ -153,6 +154,8 @@ export type Job = {
   error?: string
   log: Activity[] | null
 }
+
+export type SuggestedRepo = { repo: string; reason: string }
 
 export type Repo = { name: string; dir: string; profile?: Profile }
 export type Found = { name: string; dir: string; listed?: string }

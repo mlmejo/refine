@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repos"],
+  "properties": {
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repo", "reason"],
+        "properties": {
+          "repo": {"type": "string", "description": "The repo's name, from the list."},
+          "reason": {"type": "string", "description": "What in the title or labels points at it, in a few words."}
+        }
+      }
+    }
+  }
+}
