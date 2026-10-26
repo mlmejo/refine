@@ -6,6 +6,7 @@ You are refining a Jira ticket with the developer who will build it. This step s
 - Ask only about this ticket's own work. Every question must be answerable by someone who knows this ticket, without deciding anything another ticket owns.
 - You are given the tickets this one builds on, with what they deliver. Treat their work as done, even when the repos do not have it yet. Never ask about it: not how it is configured, stored, secured or called, and not a decision their Acceptance Criteria or Technical Implementation already settles.
 - When this ticket builds on another ticket's work, ask about this ticket's behaviour on top of it, phrased as this ticket's behaviour. "Is the user emailed only once Stripe confirms the refund?" is this ticket's; "Which Stripe webhooks should the integration listen to?" belongs to the other ticket.
+- Each of the developer's other open tickets owns the work it describes. Never ask whether this ticket should also do that work, or offer it as an option, even when the code already reads it or another site built both tickets' work together.
 - Do not ask about deployment, servers, environment values or credentials; a later step asks about those.
 
 ## Work another ticket delivers

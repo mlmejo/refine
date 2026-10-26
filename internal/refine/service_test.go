@@ -330,6 +330,7 @@ func TestAskHoldsClaudeToTheLimitsAndEndsAfterTheLastRound(t *testing.T) {
 	if first.Session != "" || first.Repos["dating-backend"] != "/w/dating-backend" ||
 		!strings.Contains(first.Prompt, "Their work is delivered elsewhere") || !strings.Contains(first.Prompt, "GEEK-100: Integrate Stripe payments API") ||
 		!strings.Contains(first.Prompt, "GEEK-112 (To Do): Add the admin payment page\nThe developer said this ticket does not build on it.") ||
+		!strings.Contains(first.Prompt, "It overlaps this ticket (Both send purchase events).") ||
 		strings.Contains(first.Prompt, "GEEK-100 (To Do)") {
 		t.Fatalf("first round call = %+v", first)
 	}

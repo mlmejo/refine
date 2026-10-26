@@ -179,11 +179,16 @@ const maxOtherDescription = 600
 
 // otherTickets lists the developer's other open tickets that are not
 // accepted blockers, so Claude can tell when the code needs one of them.
-// Those the developer rejected as blockers are marked.
+// Those the developer rejected as blockers are marked, and so are overlaps,
+// whose own work stays with them.
 func otherTickets(candidates []jira.Ticket, r Refinement) string {
 	decided := map[string]string{}
 	for _, b := range r.Related.Blockers {
 		decided[b.Key] = b.Decision
+	}
+	overlaps := map[string]string{}
+	for _, o := range r.Related.Overlaps {
+		overlaps[o.Key] = o.Reason
 	}
 	var out strings.Builder
 	for _, c := range candidates {
@@ -196,6 +201,9 @@ func otherTickets(candidates []jira.Ticket, r Refinement) string {
 		fmt.Fprintf(&out, "\n%s (%s): %s\n", c.Key, c.Status, c.Summary)
 		if decided[c.Key] == Rejected {
 			out.WriteString("The developer said this ticket does not build on it.\n")
+		}
+		if reason, ok := overlaps[c.Key]; ok {
+			fmt.Fprintf(&out, "It overlaps this ticket (%s). The work it describes beyond this ticket's stays with it.\n", reason)
 		}
 		if c.Refined() {
 			section(&out, "Acceptance Criteria", c.AcceptanceCriteria)
