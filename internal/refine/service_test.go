@@ -89,10 +89,15 @@ func (f *fakeJira) MoveToSprint(_ context.Context, key, sprint string) error {
 type fakeClaude struct {
 	answers []any
 	calls   []claude.Call
+	// during runs while Claude works, before it answers.
+	during func()
 }
 
 func (f *fakeClaude) Do(_ context.Context, call claude.Call, into any, progress func(claude.Activity)) (claude.Run, error) {
 	f.calls = append(f.calls, call)
+	if f.during != nil {
+		f.during()
+	}
 	if len(f.answers) == 0 {
 		return claude.Run{}, errors.New("no answer left")
 	}
@@ -152,6 +157,10 @@ func ticket(key, summary string, refined bool) jira.Ticket {
 	return t
 }
 
+type fakeRepos map[string]string
+
+func (r fakeRepos) List() map[string]string { return maps.Clone(r) }
+
 func setup() (*Service, *fakeJira, *fakeClaude, *memStore, *fakeGit) {
 	j := &fakeJira{tickets: map[string]jira.Ticket{
 		"GEEK-100": ticket("GEEK-100", "Integrate Stripe payments API", true),
@@ -163,9 +172,7 @@ func setup() (*Service, *fakeJira, *fakeClaude, *memStore, *fakeGit) {
 	st := &memStore{refinements: map[string]Refinement{}, profiles: map[string]Profile{}}
 	g := &fakeGit{fail: map[string]bool{}}
 	s := &Service{Jira: j, Claude: c, Store: st, Git: g, Sprint: "Refinement Ready - Team John", ReadySprint: "Ready for Sprint - Team John",
-		Repos: func() map[string]string {
-			return map[string]string{"admin": "/r/admin", "dating-backend": "/r/dating-backend", "costs": "/r/costs"}
-		},
+		Repos:     fakeRepos{"admin": "/r/admin", "dating-backend": "/r/dating-backend", "costs": "/r/costs"},
 		Worktrees: "/w"}
 	return s, j, c, st, g
 }
@@ -226,6 +233,54 @@ func TestSearchAgainSendsTheExplanationAndKeepsDecisions(t *testing.T) {
 	}
 	if !strings.Contains(c.calls[1].Prompt, `"GEEK-131 also blocks this"`) || r.Related.Blockers[0].Decision != Accepted {
 		t.Fatalf("prompt = %s\nrelated = %+v", c.calls[1].Prompt, r.Related)
+	}
+}
+
+func TestSearchKeepsADecisionMadeWhileItRuns(t *testing.T) {
+	s, _, c, _, _ := setup()
+	c.answers = []any{related, related}
+	ctx := context.Background()
+	if _, err := s.Search(ctx, "GEEK-101", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	c.during = func() {
+		if _, err := s.Decide("GEEK-101", "GEEK-112", Rejected); err != nil {
+			t.Error(err)
+		}
+	}
+	r, err := s.Search(ctx, "GEEK-101", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Related.Blockers[1].Key != "GEEK-112" || r.Related.Blockers[1].Decision != Rejected {
+		t.Fatalf("related = %+v", r.Related)
+	}
+	saved, _, _ := s.Store.Load("GEEK-101")
+	if saved.Related.Blockers[1].Decision != Rejected {
+		t.Fatalf("saved = %+v", saved.Related)
+	}
+}
+
+func TestSearchFailsWhenTheTicketMovedOnWhileItRan(t *testing.T) {
+	s, _, c, _, _ := setup()
+	c.answers = []any{related, related}
+	ctx := context.Background()
+	if _, err := s.Search(ctx, "GEEK-101", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	s.Decide("GEEK-101", "GEEK-100", Rejected)
+	s.Decide("GEEK-101", "GEEK-112", Rejected)
+	c.during = func() {
+		if _, err := s.Continue(ctx, "GEEK-101"); err != nil {
+			t.Error(err)
+		}
+	}
+	if _, err := s.Search(ctx, "GEEK-101", "", nil); !errors.Is(err, ErrStep) {
+		t.Fatalf("err = %v", err)
+	}
+	saved, _, _ := s.Store.Load("GEEK-101")
+	if saved.Step != StepRepos {
+		t.Fatalf("saved = %+v", saved)
 	}
 }
 

@@ -62,6 +62,8 @@ type Link struct {
 	Key      string `json:"key"`
 	Summary  string `json:"summary"`
 	Status   string `json:"status"`
+	// IssueType is the other ticket's type, e.g. "Task".
+	IssueType string `json:"issue_type"`
 }
 
 // Refinement is what refine writes back to a ticket.
@@ -321,11 +323,12 @@ func links(raw []rawLink) []Link {
 			continue
 		}
 		out = append(out, Link{
-			Type:     link.Type.Name,
-			Relation: relation,
-			Key:      other.Key,
-			Summary:  other.Fields.Summary,
-			Status:   other.Fields.Status.Name,
+			Type:      link.Type.Name,
+			Relation:  relation,
+			Key:       other.Key,
+			Summary:   other.Fields.Summary,
+			Status:    other.Fields.Status.Name,
+			IssueType: other.Fields.IssueType.Name,
 		})
 	}
 	return out
@@ -339,6 +342,9 @@ type linkedIssue struct {
 		Status  struct {
 			Name string `json:"name"`
 		} `json:"status"`
+		IssueType struct {
+			Name string `json:"name"`
+		} `json:"issuetype"`
 	} `json:"fields"`
 }
 
@@ -487,7 +493,50 @@ func (c *Client) Split(ctx context.Context, parent, sprint string) (SplitTarget,
 // child never holds the parent open. It returns the new key. Story points are
 // not on the create screen, so they are written after; when that fails the
 // ticket exists, and its key comes back with the error.
+//
+// A Task already related to the parent with the same summary is taken as
+// this child, created by an earlier try whose response never arrived, and
+// only its points are written.
 func (c *Client) CreateChild(ctx context.Context, target SplitTarget, child NewChild) (string, error) {
+	key, err := c.existingChild(ctx, target.Parent, child.Summary)
+	if err != nil {
+		return "", err
+	}
+	if key == "" {
+		if key, err = c.createChild(ctx, target, child); err != nil {
+			return "", err
+		}
+	}
+	points, err := json.Marshal(map[string]any{"fields": map[string]any{FieldStoryPoints: child.Points}})
+	if err != nil {
+		return key, err
+	}
+	if err := c.do(ctx, http.MethodPut, "/rest/api/2/issue/"+url.PathEscape(key), points, nil); err != nil {
+		return key, fmt.Errorf("created %s, but could not set its points: %w", key, err)
+	}
+	return key, nil
+}
+
+// existingChild finds a Task related to parent with the given summary.
+func (c *Client) existingChild(ctx context.Context, parent, summary string) (string, error) {
+	var raw struct {
+		Fields struct {
+			IssueLinks []rawLink `json:"issuelinks"`
+		} `json:"fields"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/rest/api/3/issue/"+url.PathEscape(parent)+"?fields=issuelinks", nil, &raw); err != nil {
+		return "", err
+	}
+	for _, link := range links(raw.Fields.IssueLinks) {
+		if link.Type == "Relates" && link.IssueType == "Task" && link.Summary == summary {
+			return link.Key, nil
+		}
+	}
+	return "", nil
+}
+
+// createChild creates the split ticket and returns its key.
+func (c *Client) createChild(ctx context.Context, target SplitTarget, child NewChild) (string, error) {
 	fields := map[string]any{
 		"project":                    map[string]string{"key": target.Project},
 		"issuetype":                  map[string]string{"name": "Task"},
@@ -524,14 +573,6 @@ func (c *Client) CreateChild(ctx context.Context, target SplitTarget, child NewC
 	}
 	if err := c.do(ctx, http.MethodPost, "/rest/api/2/issue", body, &created); err != nil {
 		return "", err
-	}
-
-	points, err := json.Marshal(map[string]any{"fields": map[string]any{FieldStoryPoints: child.Points}})
-	if err != nil {
-		return created.Key, err
-	}
-	if err := c.do(ctx, http.MethodPut, "/rest/api/2/issue/"+url.PathEscape(created.Key), points, nil); err != nil {
-		return created.Key, fmt.Errorf("created %s, but could not set its points: %w", created.Key, err)
 	}
 	return created.Key, nil
 }

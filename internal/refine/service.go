@@ -53,6 +53,12 @@ type Git interface {
 	Checkout(ctx context.Context, repo, commit, dest string) error
 }
 
+// Repos lists the configured repos by name. List returns a map the caller
+// may keep.
+type Repos interface {
+	List() map[string]string
+}
+
 // Service runs refinements.
 type Service struct {
 	Jira   Jira
@@ -63,9 +69,9 @@ type Service struct {
 	// stamped ticket moves into.
 	Sprint      string
 	ReadySprint string
-	// Repos are the configured repos by name, read when called so a change
-	// applies to the next step.
-	Repos func() map[string]string
+	// Repos are the configured repos, listed when needed so a change applies
+	// to the next step.
+	Repos Repos
 	// Worktrees is where each repo's commit is checked out for Claude.
 	Worktrees string
 	// Hidden reports tickets the developer hid from the list.
@@ -226,9 +232,7 @@ func (s *Service) Open(ctx context.Context, key string) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
-	s.mu.Lock()
 	r, started, err := s.Store.Load(key)
-	s.mu.Unlock()
 	if err != nil {
 		return View{}, err
 	}
@@ -303,8 +307,19 @@ func (s *Service) suggested(r Refinement) []SuggestedRepo {
 	return out
 }
 
-// update loads a refinement, lets change edit it, and saves it.
+// update loads a refinement, lets change edit it, and saves it. Every write
+// goes through update or upsert, which load again under the lock, so a
+// change saved while Claude ran is not lost. Reads take no lock.
 func (s *Service) update(key string, change func(*Refinement) error) (Refinement, error) {
+	return s.save(key, "", false, change)
+}
+
+// upsert is update, starting from a new refinement when the ticket has none.
+func (s *Service) upsert(key, summary string, change func(*Refinement) error) (Refinement, error) {
+	return s.save(key, summary, true, change)
+}
+
+func (s *Service) save(key, summary string, create bool, change func(*Refinement) error) (Refinement, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok, err := s.Store.Load(key)
@@ -312,7 +327,10 @@ func (s *Service) update(key string, change func(*Refinement) error) (Refinement
 		return Refinement{}, err
 	}
 	if !ok {
-		return Refinement{}, fmt.Errorf("%s has no refinement", key)
+		if !create {
+			return Refinement{}, fmt.Errorf("%s has no refinement", key)
+		}
+		r = New(key, summary)
 	}
 	if err := change(&r); err != nil {
 		return Refinement{}, err
@@ -329,9 +347,7 @@ func (s *Service) Search(ctx context.Context, key, explanation string, progress 
 	if err != nil {
 		return Refinement{}, err
 	}
-	s.mu.Lock()
 	r, ok, err := s.Store.Load(key)
-	s.mu.Unlock()
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -367,10 +383,6 @@ func (s *Service) Search(ctx context.Context, key, explanation string, progress 
 	for _, c := range candidates {
 		byKey[c.Key] = c
 	}
-	decided := map[string]string{}
-	for _, b := range r.Related.Blockers {
-		decided[b.Key] = b.Decision
-	}
 	related := Related{Searched: true, Explanations: explanations, Blockers: []Blocker{}, Overlaps: []Overlap{}}
 	seen := map[string]bool{key: true}
 	for _, b := range out.Blockers {
@@ -380,7 +392,7 @@ func (s *Service) Search(ctx context.Context, key, explanation string, progress 
 		}
 		seen[b.Key] = true
 		related.Blockers = append(related.Blockers, Blocker{Key: c.Key, Summary: c.Summary, Reason: b.Reason,
-			Quote: b.Quote, Refined: c.Refined(), Decision: decided[c.Key]})
+			Quote: b.Quote, Refined: c.Refined()})
 	}
 	for _, o := range out.Overlaps {
 		c, ok := byKey[o.Key]
@@ -391,12 +403,20 @@ func (s *Service) Search(ctx context.Context, key, explanation string, progress 
 		related.Overlaps = append(related.Overlaps, Overlap{Key: c.Key, Summary: c.Summary, Reason: o.Reason})
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r.Summary, r.Related = t.Summary, related
-	r.CostUSD += run.CostUSD
-	r.Updated = time.Now()
-	return r, s.Store.Save(r)
+	// Decisions are read again here, so one made while Claude ran is kept.
+	return s.upsert(key, t.Summary, func(r *Refinement) error {
+		if r.Step != StepRelated {
+			return fmt.Errorf("related tickets: %w", ErrStep)
+		}
+		for i, b := range related.Blockers {
+			if j := slices.IndexFunc(r.Related.Blockers, func(o Blocker) bool { return o.Key == b.Key }); j >= 0 {
+				related.Blockers[i].Decision = r.Related.Blockers[j].Decision
+			}
+		}
+		r.Summary, r.Related = t.Summary, related
+		r.CostUSD += run.CostUSD
+		return nil
+	})
 }
 
 // Decide accepts or rejects a blocker. A blocker Claude found while reading
@@ -479,7 +499,7 @@ func (s *Service) check(ctx context.Context, key string) (Refinement, error) {
 
 // SetRepos records the repos picked for the ticket.
 func (s *Service) SetRepos(key string, repos []string) (Refinement, error) {
-	configured := s.Repos()
+	configured := s.Repos.List()
 	for _, name := range repos {
 		if _, ok := configured[name]; !ok {
 			return Refinement{}, fmt.Errorf("no repo named %s in the config", name)
@@ -498,9 +518,7 @@ func (s *Service) SetRepos(key string, repos []string) (Refinement, error) {
 // Suggest asks Claude which configured repos the ticket's title and labels
 // point at, once per refinement. Claude reads only the repos' names.
 func (s *Service) Suggest(ctx context.Context, key string) (Refinement, error) {
-	s.mu.Lock()
 	r, ok, err := s.Store.Load(key)
-	s.mu.Unlock()
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -510,7 +528,7 @@ func (s *Service) Suggest(ctx context.Context, key string) (Refinement, error) {
 	if r.Suggestion != nil {
 		return r, nil
 	}
-	repos := slices.Sorted(maps.Keys(s.Repos()))
+	repos := slices.Sorted(maps.Keys(s.Repos.List()))
 	suggestion := Suggestion{Repos: []SuggestedRepo{}}
 	var cost float64
 	if len(repos) > 0 {
@@ -580,7 +598,7 @@ func (s *Service) Sync(ctx context.Context, key string) (Refinement, error) {
 	if len(r.Repos) == 0 {
 		return Refinement{}, errors.New("pick at least one repo")
 	}
-	configured := s.Repos()
+	configured := s.Repos.List()
 	statuses := make([]gitsync.Status, len(r.Repos))
 	var wg sync.WaitGroup
 	for i, name := range r.Repos {
@@ -606,7 +624,7 @@ func (s *Service) Sync(ctx context.Context, key string) (Refinement, error) {
 // checkout puts each repo's synced commit in its worktree and returns the
 // directories Claude reads.
 func (s *Service) checkout(ctx context.Context, r Refinement) (map[string]string, error) {
-	configured := s.Repos()
+	configured := s.Repos.List()
 	dirs := map[string]string{}
 	for _, name := range r.Repos {
 		st, ok := r.Commit(name)

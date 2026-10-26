@@ -4,11 +4,13 @@ package config
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/BurntSushi/toml"
 )
@@ -157,6 +159,52 @@ func RemoveRepo(path, name string) error {
 		}
 		return slices.Delete(lines, start+i, start+i+1), nil
 	})
+}
+
+// Repos are the configured repos by name, kept in step with the [repos]
+// table of the config file. It is safe to use from many goroutines.
+type Repos struct {
+	path string
+	mu   sync.RWMutex
+	m    map[string]string
+}
+
+// NewRepos returns the repos m, listed in the config at path.
+func NewRepos(path string, m map[string]string) *Repos {
+	r := &Repos{path: path, m: maps.Clone(m)}
+	if r.m == nil {
+		r.m = map[string]string{}
+	}
+	return r
+}
+
+// List returns a copy of the repos, so the caller may keep or change it.
+func (r *Repos) List() map[string]string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return maps.Clone(r.m)
+}
+
+// Add lists name = dir in the config file, then in r.
+func (r *Repos) Add(name, dir string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := AddRepo(r.path, name, dir); err != nil {
+		return err
+	}
+	r.m[name] = dir
+	return nil
+}
+
+// Remove drops name from the config file, then from r.
+func (r *Repos) Remove(name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := RemoveRepo(r.path, name); err != nil {
+		return err
+	}
+	delete(r.m, name)
+	return nil
 }
 
 // editRepos hands edit the file's lines and the bounds of its [repos] table,
