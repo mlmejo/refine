@@ -499,6 +499,7 @@ type job struct {
 	Log     []claude.Activity `json:"log"`
 
 	cancel context.CancelFunc
+	done   chan struct{} // closed when the run's goroutine ends
 }
 
 // The kinds of job.
@@ -510,12 +511,15 @@ const (
 	kindRewrite  = "rewrite"
 )
 
-// Close cancels the running job, so its Claude run stops with the server.
+// Close cancels the running job and waits for it to end, so its Claude run
+// stops before the store closes.
 func (s *Server) Close() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.job != nil {
-		s.job.cancel()
+	j := s.job
+	s.mu.Unlock()
+	if j != nil {
+		j.cancel()
+		<-j.done
 	}
 }
 
@@ -539,13 +543,21 @@ func (s *Server) currentJob(w http.ResponseWriter, r *http.Request) {
 	reply(w, out)
 }
 
+// cancelJob cancels the job and waits for it to end before clearing it, so
+// no new run starts while the old one is still unwinding.
 func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	if s.job != nil && s.job.ID == r.PathValue("id") {
-		s.job.cancel()
-		s.job = nil
-	}
+	j := s.job
 	s.mu.Unlock()
+	if j != nil && j.ID == r.PathValue("id") {
+		j.cancel()
+		<-j.done
+		s.mu.Lock()
+		if s.job == j {
+			s.job = nil
+		}
+		s.mu.Unlock()
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -600,12 +612,13 @@ func (s *Server) startJob(w http.ResponseWriter, r *http.Request) {
 	}
 	s.nextID++
 	ctx, cancel := context.WithCancel(context.Background())
-	j := &job{ID: strconv.Itoa(s.nextID), Kind: body.Kind, Key: body.Key, Started: time.Now(), Log: []claude.Activity{}, cancel: cancel}
+	j := &job{ID: strconv.Itoa(s.nextID), Kind: body.Kind, Key: body.Key, Started: time.Now(), Log: []claude.Activity{}, cancel: cancel, done: make(chan struct{})}
 	s.job = j
 	out := *j
 	s.mu.Unlock()
 
 	go func() {
+		defer close(j.done)
 		defer cancel()
 		err := work(ctx, func(a claude.Activity) {
 			s.mu.Lock()

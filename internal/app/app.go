@@ -28,7 +28,8 @@ type App struct {
 	Store  *store.Store
 }
 
-// Close stops the running Claude run and closes the store.
+// Close stops the running Claude run, waits for it to end, then closes the
+// store.
 func (a *App) Close() error {
 	a.Server.Close()
 	return a.Store.Close()

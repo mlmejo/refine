@@ -69,21 +69,26 @@ func (noGit) Checkout(context.Context, string, string, string) error { return ni
 
 func setup(t *testing.T) (*Server, chan struct{}) {
 	t.Helper()
+	release := make(chan struct{})
+	return setupWith(t, slowClaude{release: release}), release
+}
+
+func setupWith(t *testing.T, c refine.Claude) *Server {
+	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "refine.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	release := make(chan struct{})
 	j := fakeJira{tickets: map[string]jira.Ticket{
 		"GEEK-100": {Issue: jira.Issue{Key: "GEEK-100", Summary: "Stripe", AcceptanceCriteria: "* a", TechnicalImplementation: "x"}},
 		"GEEK-101": {Issue: jira.Issue{Key: "GEEK-101", Summary: "Refunds"}, DescriptionMarkdown: "Use **Stripe**."},
 	}}
-	svc := &refine.Service{Jira: j, Claude: slowClaude{release: release}, Store: st, Git: noGit{},
+	svc := &refine.Service{Jira: j, Claude: c, Store: st, Git: noGit{},
 		Sprint: "S", ReadySprint: "R", Repos: func() map[string]string { return map[string]string{"admin": "/r/admin"} }}
 	srv := New(Info{Project: "GEEK"}, svc, Repos{List: func() map[string]string { return map[string]string{"admin": "/r/admin"} }}, nil, nil)
 	t.Cleanup(srv.Close)
-	return srv, release
+	return srv
 }
 
 func call(t *testing.T, srv *Server, method, path, body string, out any) int {
@@ -181,6 +186,75 @@ func TestSearchJobThenDecideAndContinue(t *testing.T) {
 	if !page.Rows[0].Started || !strings.HasPrefix(page.Rows[0].Step, "Questions") {
 		t.Fatalf("page = %+v", page)
 	}
+}
+
+// stubbornClaude keeps running after cancel until unwound, like a Claude
+// process given time to exit.
+type stubbornClaude struct{ started, unwind chan struct{} }
+
+func (c stubbornClaude) Do(ctx context.Context, call claude.Call, into any, progress func(claude.Activity)) (claude.Run, error) {
+	c.started <- struct{}{}
+	<-ctx.Done()
+	<-c.unwind
+	return claude.Run{}, ctx.Err()
+}
+
+// returnsBefore reports whether f returns before unwind is closed.
+func returnsBefore(t *testing.T, f func(), unwind chan struct{}) {
+	t.Helper()
+	returned := make(chan struct{})
+	go func() {
+		f()
+		close(returned)
+	}()
+	select {
+	case <-returned:
+		t.Fatal("returned while the job was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(unwind)
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("did not return after the job stopped")
+	}
+}
+
+func TestCancelJobWaitsForTheRunToStop(t *testing.T) {
+	c := stubbornClaude{started: make(chan struct{}, 2), unwind: make(chan struct{})}
+	srv := setupWith(t, c)
+	var started job
+	if code := call(t, srv, "POST", "/api/jobs", `{"kind":"search","key":"GEEK-101"}`, &started); code != 200 {
+		t.Fatalf("start = %d", code)
+	}
+	<-c.started
+	returnsBefore(t, func() {
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			if code := call(t, srv, "POST", "/api/jobs", `{"kind":"search","key":"GEEK-101"}`, nil); code != http.StatusConflict {
+				t.Errorf("job started while the cancelled one still ran: %d", code)
+			}
+		}()
+		call(t, srv, "DELETE", "/api/jobs/"+started.ID, "", nil)
+	}, c.unwind)
+	var current *job
+	call(t, srv, "GET", "/api/job", "", &current)
+	if current != nil {
+		t.Fatalf("job after cancel = %+v", current)
+	}
+	if code := call(t, srv, "POST", "/api/jobs", `{"kind":"search","key":"GEEK-101"}`, nil); code != 200 {
+		t.Fatalf("restart = %d", code)
+	}
+}
+
+func TestCloseWaitsForTheRunToStop(t *testing.T) {
+	c := stubbornClaude{started: make(chan struct{}, 1), unwind: make(chan struct{})}
+	srv := setupWith(t, c)
+	if code := call(t, srv, "POST", "/api/jobs", `{"kind":"search","key":"GEEK-101"}`, nil); code != 200 {
+		t.Fatalf("start = %d", code)
+	}
+	<-c.started
+	returnsBefore(t, srv.Close, c.unwind)
 }
 
 func TestSetProfileNeedsAKnownRepo(t *testing.T) {
