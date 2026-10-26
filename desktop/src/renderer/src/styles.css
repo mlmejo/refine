@@ -532,8 +532,12 @@ kbd {
   color: var(--text-3);
   cursor: pointer;
 }
-.step-pill.done:hover {
+.step-pill.done:hover:not(:disabled) {
   background: var(--hover);
+}
+.step-pill.done:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 .step-pill.current {
   background: var(--selected);
@@ -1001,8 +1005,89 @@ kbd {
     transform: rotate(360deg);
   }
 }
+
+/* The seal: a round stamp that slams onto a just-stamped ticket's results in
+   ink, then stays over them as a faint green watermark. It sits above the
+   content but lets every click through. */
+.results-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* The seal starts larger than the page, and the page shakes; neither
+     should scroll it sideways. */
+  overflow: hidden;
+}
+.results-body > .scroll {
+  overflow-x: hidden;
+}
+.seal {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  color: var(--green);
+  opacity: 0.07;
+  /* A slab face reads as rubber stamp ink, where Inter reads as UI. */
+  font-family: Rockwell, 'Roboto Slab', 'American Typewriter', 'Courier New', serif;
+}
+.seal svg {
+  width: min(420px, 70%);
+  height: auto;
+}
+.seal.slam {
+  animation: seal-slam 1.8s ease-out both;
+}
+.page.slam {
+  animation: stamp-shake 0.25s ease-out 0.35s;
+}
+@keyframes seal-slam {
+  0% {
+    opacity: 0;
+    color: var(--text);
+    transform: scale(2.5);
+  }
+  22% {
+    opacity: 0.85;
+    color: var(--text);
+    transform: scale(0.96);
+  }
+  30% {
+    opacity: 0.85;
+    color: var(--text);
+    transform: scale(1);
+  }
+  65% {
+    opacity: 0.85;
+    color: var(--text);
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0.07;
+    color: var(--green);
+    transform: scale(1);
+  }
+}
+@keyframes stamp-shake {
+  25% {
+    transform: translate(-2px, 1px);
+  }
+  50% {
+    transform: translate(2px, -1px);
+  }
+  75% {
+    transform: translate(-1px, 0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .spinner {
+  .spinner,
+  .seal.slam,
+  .page.slam {
     animation: none;
   }
 }

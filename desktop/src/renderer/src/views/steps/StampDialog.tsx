@@ -4,7 +4,7 @@ import type { View } from '../../types'
 
 // StampDialog lists every Jira write a stamp makes and runs them. A failed
 // write shows its error, and a retry starts again from it.
-export function StampDialog({ view, onClose }: { view: View; onClose: () => void }) {
+export function StampDialog({ view, onClose, onStamped }: { view: View; onClose: () => void; onStamped: () => void }) {
   const refine = useRefine()
   const r = view.refinement
   const plan = view.stamp_plan ?? []
@@ -16,6 +16,7 @@ export function StampDialog({ view, onClose }: { view: View; onClose: () => void
     const after = await refine.act(r.key, 'stamp', () => api.stamp(r.key))
     if (after?.refinement.step === 'stamped') {
       void refine.refresh()
+      onStamped()
       onClose()
     }
   }

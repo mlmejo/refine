@@ -7,7 +7,7 @@ import { Repos } from './steps/Repos'
 import { Questions } from './steps/Questions'
 import { Deploy } from './steps/Deploy'
 import { Results } from './steps/Results'
-import { Stamped } from './steps/Stamped'
+import { Summary } from './steps/Summary'
 import { Working } from './Working'
 import { typing } from '../typing'
 
@@ -16,18 +16,32 @@ const steps: { step: Step; label: string }[] = [
   { step: 'repos', label: 'Repos' },
   { step: 'questions', label: 'Questions' },
   { step: 'deploy', label: 'Deploy' },
-  { step: 'results', label: 'Results' },
-  { step: 'stamped', label: 'Stamp' }
+  { step: 'results', label: 'Results' }
 ]
 
 const order = (s: Step) => steps.findIndex((x) => x.step === s)
 
-function StepBar({ view, viewing, onView }: { view: View; viewing: Step; onView: (s: Step) => void }) {
+// Tab is what the step bar can show: a step, or the ticket's summary.
+type Tab = Step | 'summary'
+
+// While a job runs the bar shows where the ticket is going, but can't be used.
+function StepBar({ view, viewing, busy, onView }: { view: View; viewing: Tab; busy: boolean; onView: (s: Tab) => void }) {
+  const stamped = view.refinement.step === 'stamped'
   const current = view.started ? order(view.refinement.step) : -1
   return (
     <ol className="steps" aria-label="Steps">
+      {(view.started || busy) && (
+        <li className="row" style={{ gap: 2 }}>
+          <button className={`step-pill done ${viewing === 'summary' ? 'viewing' : ''}`} disabled={busy} onClick={() => onView('summary')}>
+            Summary
+          </button>
+          <span className="sep" aria-hidden="true">
+            ›
+          </span>
+        </li>
+      )}
       {steps.map(({ step, label }, i) => {
-        const done = i < current || view.refinement.step === 'stamped'
+        const done = i < current || stamped
         const state = done ? 'done' : i === current ? 'current' : 'todo'
         return (
           <li key={step} className="row" style={{ gap: 2 }}>
@@ -38,7 +52,7 @@ function StepBar({ view, viewing, onView }: { view: View; viewing: Step; onView:
             )}
             <button
               className={`step-pill ${state} ${viewing === step && done ? 'viewing' : ''}`}
-              disabled={state === 'todo'}
+              disabled={state === 'todo' || busy}
               aria-current={state === 'current' ? 'step' : undefined}
               onClick={() => onView(step)}
             >
@@ -75,8 +89,10 @@ export function Ticket({ ticketKey }: { ticketKey: string }) {
   const view = refine.views[ticketKey]
   const error = refine.errors[ticketKey]
   const running = refine.job && !refine.job.done && refine.job.key === ticketKey ? refine.job : undefined
-  const [viewing, setViewing] = useState<Step>()
+  const [viewing, setViewing] = useState<Tab>()
   const step = view?.refinement.step
+  // A stamped ticket stays on its results.
+  const at: Step | undefined = step === 'stamped' ? 'results' : step
 
   // Moving on shows the new step.
   useEffect(() => setViewing(undefined), [step])
@@ -91,8 +107,8 @@ export function Ticket({ ticketKey }: { ticketKey: string }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [refine])
 
-  const shown: Step | undefined = viewing ?? step
-  const readOnly = viewing !== undefined && viewing !== step
+  const shown: Tab | undefined = viewing ?? at
+  const readOnly = viewing !== undefined && viewing !== at
 
   return (
     <>
@@ -106,6 +122,7 @@ export function Ticket({ ticketKey }: { ticketKey: string }) {
           </span>
           <span className="mono muted">{ticketKey}</span>
           <span className="title ellipsis">{view?.ticket.summary || view?.refinement.summary}</span>
+          {step === 'stamped' && <span className="chip green">✓ Stamped</span>}
           {refine.info?.site && (
             <a
               href={`https://${refine.info.site}/browse/${ticketKey}`}
@@ -118,7 +135,7 @@ export function Ticket({ ticketKey }: { ticketKey: string }) {
             </a>
           )}
         </div>
-        {view && <StepBar view={view} viewing={shown ?? 'related'} onView={(s) => setViewing(s === step ? undefined : s)} />}
+        {view && <StepBar view={view} viewing={shown ?? 'related'} busy={!!running} onView={(s) => setViewing(s === at ? undefined : s)} />}
       </header>
       {error && !running && (
         <div style={{ padding: '12px 20px 0' }}>
@@ -134,12 +151,16 @@ export function Ticket({ ticketKey }: { ticketKey: string }) {
       {view && !running && (
         <>
           {!view.started && <Start view={view} />}
+          {view.started && shown === 'summary' && (
+            <div className="scroll">
+              <Summary view={view} />
+            </div>
+          )}
           {view.started && shown === 'related' && <Related view={view} readOnly={readOnly} />}
           {view.started && shown === 'repos' && <Repos view={view} readOnly={readOnly} />}
           {view.started && shown === 'questions' && <Questions key={view.refinement.rounds?.length ?? 0} view={view} readOnly={readOnly} />}
           {view.started && shown === 'deploy' && <Deploy key={view.refinement.deploy ? 'asked' : 'not yet'} view={view} readOnly={readOnly} />}
           {view.started && shown === 'results' && <Results view={view} readOnly={readOnly} />}
-          {view.started && shown === 'stamped' && <Stamped view={view} />}
         </>
       )}
     </>
