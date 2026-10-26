@@ -3,6 +3,7 @@ package jira
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -11,8 +12,10 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestSearchSendsJQLAndDecodesIssues(t *testing.T) {
@@ -115,7 +118,7 @@ func TestMyselfReturnsDisplayName(t *testing.T) {
 	}
 }
 
-func TestGetTicketReadsDescriptionPointsCommentsAndLinks(t *testing.T) {
+func TestTicketReadsDescriptionPointsCommentsAndLinks(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/rest/api/3/issue/GEEK-7" {
 			t.Errorf("path = %s", r.URL.Path)
@@ -146,7 +149,7 @@ func TestGetTicketReadsDescriptionPointsCommentsAndLinks(t *testing.T) {
 	}))
 	defer server.Close()
 
-	ticket, err := New(server.URL, "me", "t").GetTicket(context.Background(), "GEEK-7")
+	ticket, err := New(server.URL, "me", "t").Ticket(context.Background(), "GEEK-7")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,6 +253,42 @@ func TestUpdateReportsJiraErrors(t *testing.T) {
 	}
 }
 
+func TestJiraErrorsCarryTheStatusAndSortedMessages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"errorMessages":["Issue does not exist"],"errors":{"b":"second","a":"first","c":"third"}}`))
+	}))
+	defer server.Close()
+
+	_, err := New(server.URL, "me", "t").Ticket(context.Background(), "GEEK-1")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("err = %v, want an *APIError", err)
+	}
+	if apiErr.StatusCode != http.StatusNotFound {
+		t.Errorf("StatusCode = %d", apiErr.StatusCode)
+	}
+	want := []string{"Issue does not exist", "first", "second", "third"}
+	if !slices.Equal(apiErr.Messages, want) {
+		t.Errorf("Messages = %q, want %q", apiErr.Messages, want)
+	}
+	if got := err.Error(); got != "jira: 404 Not Found: Issue does not exist; first; second; third" {
+		t.Errorf("Error() = %q", got)
+	}
+}
+
+func TestJiraErrorsWithoutMessagesGiveTheStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	_, err := New(server.URL, "me", "t").Myself(context.Background())
+	if got := fmt.Sprint(err); got != "jira: 401 Unauthorized" {
+		t.Errorf("err = %q", got)
+	}
+}
+
 func TestMoveToSprintFindsTheSprintOnTheTicketsBoard(t *testing.T) {
 	var moved []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -348,6 +387,8 @@ func TestCreateChildCreatesALinkedTaskThenSetsPoints(t *testing.T) {
 	var points map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/issue/GEEK-1":
+			w.Write([]byte(`{"key":"GEEK-1","fields":{"issuelinks":[]}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/2/issue":
 			json.NewDecoder(r.Body).Decode(&created)
 			w.WriteHeader(http.StatusCreated)
@@ -409,7 +450,11 @@ func TestCreateChildCreatesALinkedTaskThenSetsPoints(t *testing.T) {
 
 func TestCreateChildReturnsTheKeyWhenPointsFail(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
+		switch r.Method {
+		case http.MethodGet:
+			w.Write([]byte(`{"key":"GEEK-1","fields":{}}`))
+			return
+		case http.MethodPost:
 			w.Write([]byte(`{"key":"GEEK-12"}`))
 			return
 		}
@@ -421,6 +466,104 @@ func TestCreateChildReturnsTheKeyWhenPointsFail(t *testing.T) {
 	key, err := New(server.URL, "me", "t").CreateChild(context.Background(), SplitTarget{Parent: "GEEK-1", Project: "GEEK"}, NewChild{Summary: "x"})
 	if key != "GEEK-12" || err == nil || !strings.Contains(err.Error(), "created GEEK-12, but could not set its points") {
 		t.Errorf("key %q err %v", key, err)
+	}
+}
+
+// fakeParent is a Jira holding one parent, GEEK-1, whose created children
+// link back to it. hold, when set, keeps the create response from going out
+// until the caller has given up, as when the app drops the request.
+type fakeParent struct {
+	mu       sync.Mutex
+	links    []string
+	creates  int
+	pointsOn []string
+	hold     chan struct{}
+}
+
+func (f *fakeParent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/issue/GEEK-1":
+		fmt.Fprintf(w, `{"key":"GEEK-1","fields":{"issuelinks":[%s]}}`, strings.Join(f.links, ","))
+	case r.Method == http.MethodPost && r.URL.Path == "/rest/api/2/issue":
+		var body struct {
+			Fields struct {
+				Summary string `json:"summary"`
+			} `json:"fields"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		f.creates++
+		key := fmt.Sprintf("GEEK-%d", 10+f.creates)
+		f.links = append(f.links, fmt.Sprintf(`{"type":{"name":"Relates","inward":"relates to","outward":"relates to"},"inwardIssue":{"key":%q,"fields":{"summary":%q,"status":{"name":"To Do"},"issuetype":{"name":"Task"}}}}`, key, body.Fields.Summary))
+		if hold := f.hold; hold != nil {
+			f.hold = nil
+			f.mu.Unlock()
+			<-hold
+			f.mu.Lock()
+		}
+		fmt.Fprintf(w, `{"key":%q}`, key)
+	case r.Method == http.MethodPut:
+		f.pointsOn = append(f.pointsOn, strings.TrimPrefix(r.URL.Path, "/rest/api/2/issue/"))
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+func TestCreateChildReusesALinkedTaskWithTheSameSummary(t *testing.T) {
+	f := &fakeParent{links: []string{
+		`{"type":{"name":"Blocks","inward":"is blocked by","outward":"blocks"},"outwardIssue":{"key":"GEEK-5","fields":{"summary":"Deleting Book","issuetype":{"name":"Task"}}}}`,
+		`{"type":{"name":"Relates","inward":"relates to","outward":"relates to"},"inwardIssue":{"key":"GEEK-6","fields":{"summary":"Deleting Book","issuetype":{"name":"Bug"}}}}`,
+		`{"type":{"name":"Relates","inward":"relates to","outward":"relates to"},"inwardIssue":{"key":"GEEK-7","fields":{"summary":"Deleting Book","issuetype":{"name":"Task"}}}}`,
+	}}
+	server := httptest.NewServer(f)
+	defer server.Close()
+
+	key, err := New(server.URL, "me", "t").CreateChild(context.Background(), SplitTarget{Parent: "GEEK-1", Project: "GEEK"}, NewChild{Summary: "Deleting Book", Refinement: Refinement{Points: 2}})
+	if err != nil || key != "GEEK-7" {
+		t.Fatalf("key %q err %v", key, err)
+	}
+	if f.creates != 0 || fmt.Sprint(f.pointsOn) != "[GEEK-7]" {
+		t.Errorf("creates = %d, points on %v", f.creates, f.pointsOn)
+	}
+}
+
+func TestCreateChildAfterACancelledCreateDoesNotCreateItTwice(t *testing.T) {
+	hold := make(chan struct{})
+	f := &fakeParent{hold: hold}
+	server := httptest.NewServer(f)
+	defer server.Close()
+	defer close(hold)
+	client := New(server.URL, "me", "t")
+	target := SplitTarget{Parent: "GEEK-1", Project: "GEEK"}
+	child := NewChild{Summary: "Deleting Book"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for {
+			f.mu.Lock()
+			created := f.creates
+			f.mu.Unlock()
+			if created > 0 {
+				cancel()
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	if key, err := client.CreateChild(ctx, target, child); err == nil {
+		t.Fatalf("cancelled create = %q, want an error", key)
+	}
+
+	key, err := client.CreateChild(context.Background(), target, child)
+	if err != nil || key != "GEEK-11" {
+		t.Fatalf("retry: key %q err %v", key, err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.creates != 1 {
+		t.Errorf("created %d tickets, want 1", f.creates)
 	}
 }
 

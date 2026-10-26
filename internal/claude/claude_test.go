@@ -1,8 +1,11 @@
 package claude
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -62,6 +65,46 @@ func TestDoFailsWithoutAnAnswer(t *testing.T) {
 	var out struct{}
 	_, err := Runner{Bin: bin}.Do(context.Background(), Call{Prompt: "p"}, &out, nil)
 	if err == nil || !strings.Contains(err.Error(), "ran out of turns") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// fakeScript writes body as a claude binary.
+func fakeScript(t *testing.T, body string) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"+body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return bin
+}
+
+func TestDoWrapsTheExitError(t *testing.T) {
+	bin := fakeScript(t, "echo 'not logged in' >&2\nexit 3\n")
+	var out struct{}
+	_, err := Runner{Bin: bin}.Do(context.Background(), Call{Prompt: "p"}, &out, nil)
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 3 {
+		t.Fatalf("err = %v, want an *exec.ExitError with code 3", err)
+	}
+	if !strings.Contains(err.Error(), "not logged in") {
+		t.Fatalf("err = %v, want claude's stderr", err)
+	}
+}
+
+func TestDoReportsAReadErrorAfterTheResult(t *testing.T) {
+	result := `{"type":"result","subtype":"success","structured_output":{}}`
+	bin := fakeScript(t, "echo '"+result+"'\nhead -c 67108865 /dev/zero | tr '\\0' a\n")
+	var out struct{}
+	_, err := Runner{Bin: bin}.Do(context.Background(), Call{Prompt: "p"}, &out, nil)
+	if !errors.Is(err, bufio.ErrTooLong) {
+		t.Fatalf("err = %v, want bufio.ErrTooLong", err)
+	}
+}
+
+func TestDecodeNamesTheSubtype(t *testing.T) {
+	_, err := decode(result{Subtype: "error_during_execution", IsError: true}, &struct{}{})
+	if err == nil || err.Error() != "claude error_during_execution: no structured output returned" {
 		t.Fatalf("err = %v", err)
 	}
 }
