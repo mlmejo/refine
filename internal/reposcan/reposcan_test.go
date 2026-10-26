@@ -79,3 +79,26 @@ func TestScanOfAMissingFolderFails(t *testing.T) {
 		t.Fatal("no error")
 	}
 }
+
+func TestScanOfAFileFails(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Scan(file, nil); err == nil {
+		t.Fatal("no error")
+	}
+}
+
+func TestScanFollowsALinkedFolder(t *testing.T) {
+	root := t.TempDir()
+	mkdirs(t, root, "real/api/.git")
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(filepath.Join(root, "real"), link); err != nil {
+		t.Skip(err)
+	}
+	found, err := Scan(link, nil)
+	if err != nil || len(found) != 1 || found[0].Dir != filepath.Join(link, "api") {
+		t.Fatalf("found %+v, err %v", found, err)
+	}
+}
