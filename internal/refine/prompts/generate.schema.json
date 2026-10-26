@@ -6,6 +6,7 @@
     "technical_implementation",
     "ratings",
     "split",
+    "split_reason",
     "deploy_needs"
   ],
   "properties": {
@@ -210,6 +211,10 @@
           }
         }
       }
+    },
+    "split_reason": {
+      "type": "string",
+      "description": "Why the ticket is split this way, or why it is one actionable issue. Two or three sentences."
     },
     "deploy_needs": {
       "type": "array",

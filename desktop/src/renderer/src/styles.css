@@ -584,6 +584,27 @@ kbd {
   font-weight: 600;
   color: var(--text-3);
 }
+.split-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.split-card.is-split {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+.split-card.is-split h2 {
+  color: var(--accent-ink);
+}
+.split-reason {
+  margin: 0;
+  color: var(--text-2);
+  max-width: 72ch;
+}
 .card.red {
   background: var(--red-soft);
   border-color: var(--red-border);

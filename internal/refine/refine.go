@@ -222,6 +222,7 @@ type Result struct {
 	Ratings                 Ratings     `json:"ratings"`
 	Points                  int         `json:"points"`
 	Split                   []Child     `json:"split"`
+	SplitReason             string      `json:"split_reason"`
 	DeployNeeds             []string    `json:"deploy_needs"`
 }
 

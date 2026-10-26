@@ -20,6 +20,7 @@ You are writing up a refined Jira ticket. The developer has answered every quest
 - Each split ticket is the next slice on top of it, usually one behaviour a user can try, titled with the feature, a dash, then the slice, for example "Book Management - Deleting Book".
 - A ticket that is already one actionable issue is not split; return no split tickets.
 - Give each split ticket its own Acceptance Criteria, Technical Implementation and ratings, from the work that slice adds. Files in the original are not repeated.
+- Give the reason for the split in two or three sentences: what makes each slice its own deliverable, or why the ticket is already one actionable issue.
 
 ## Deploy needs
 - List what this ticket adds to a deploy, from the deployment answers: one concrete step per line, such as "Add STRIPE_REFUND_SECRET on staging and prod" or "Run the refunds migration before the release".

@@ -147,6 +147,45 @@ export function Results({ view, readOnly }: { view: View; readOnly: boolean }) {
       <div className="scroll">
         <div className="page">
           <div className="page-main">
+            <section className={`split-card${split.length ? ' is-split' : ''}`} aria-label="Split">
+              <div className="section-head">
+                <h2>{split.length ? `Split into ${split.length + 1} tickets` : 'Not split'}</h2>
+                {split.length > 0 && <span className="chip accent">{split.length} new</span>}
+              </div>
+              {result.split_reason && <p className="split-reason">{result.split_reason}</p>}
+              <div className="row">
+                <span className="mono muted" style={{ width: 82 }}>
+                  {key}
+                </span>
+                <span className="small">{split.length ? 'keeps the first slice' : 'is one actionable ticket'}</span>
+              </div>
+              {split.map((c, i) => (
+                <div key={i} className="stack" style={{ gap: 2 }}>
+                  <div className="row">
+                    <span className="chip accent" style={{ width: 82, justifyContent: 'center' }}>
+                      {r.stamp.children?.[String(i)] ?? 'New'}
+                    </span>
+                    <textarea
+                      className="inline-edit grow"
+                      rows={1}
+                      value={c.title}
+                      readOnly={locked}
+                      aria-label={`Split ticket ${i + 1} title`}
+                      onChange={(e) => change({ ...result, split: split.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)) })}
+                    />
+                  </div>
+                  <span className="muted small" style={{ paddingLeft: 90 }}>
+                    {c.points} point{c.points === 1 ? '' : 's'} · {(c.acceptance_criteria ?? []).length} criteria
+                  </span>
+                </div>
+              ))}
+              {split.length > 0 && (
+                <p className="muted small" style={{ margin: 0 }}>
+                  New tickets go to {refine.info?.ready_sprint} and relate to {key}. The fields below are {key}&apos;s first slice.
+                </p>
+              )}
+            </section>
+
             <section className="section">
               <div className="section-head">
                 <h2>Acceptance Criteria</h2>
@@ -244,41 +283,6 @@ export function Results({ view, readOnly }: { view: View; readOnly: boolean }) {
           </div>
 
           <aside className="page-side">
-            <div className="card">
-              <h3>{split.length ? `Split into ${split.length + 1} tickets` : 'Not split'}</h3>
-              <div className="row">
-                <span className="mono muted" style={{ width: 82 }}>
-                  {key}
-                </span>
-                <span className="small">{split.length ? 'keeps the first slice' : 'is one actionable ticket'}</span>
-              </div>
-              {split.map((c, i) => (
-                <div key={i} className="stack" style={{ gap: 2 }}>
-                  <div className="row">
-                    <span className="chip accent" style={{ width: 82, justifyContent: 'center' }}>
-                      {r.stamp.children?.[String(i)] ?? 'New'}
-                    </span>
-                    <textarea
-                      className="inline-edit grow"
-                      rows={1}
-                      value={c.title}
-                      readOnly={locked}
-                      aria-label={`Split ticket ${i + 1} title`}
-                      onChange={(e) => change({ ...result, split: split.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)) })}
-                    />
-                  </div>
-                  <span className="muted small" style={{ paddingLeft: 90 }}>
-                    {c.points} point{c.points === 1 ? '' : 's'} · {(c.acceptance_criteria ?? []).length} criteria
-                  </span>
-                </div>
-              ))}
-              {split.length > 0 && (
-                <p className="muted small" style={{ margin: 0 }}>
-                  New tickets go to {refine.info?.ready_sprint} and relate to {key}.
-                </p>
-              )}
-            </div>
-
             <div className="card">
               <h3>Deploy needs, posted as one comment</h3>
               <Lines

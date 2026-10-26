@@ -428,6 +428,7 @@ var generated = map[string]any{
 		"title": "Refunds - Status", "acceptance_criteria": []string{"Status shows."}, "technical_implementation": []any{},
 		"ratings": map[string]string{"novelty": "Low", "risk": "Low", "dependency": "Low", "testing": "N/A", "deployment": "Low"},
 	}},
+	"split_reason": " Status is its own behaviour a user can check. ",
 	"deploy_needs": []string{"Turn on `charge.refunded` for the webhook."},
 }
 
@@ -460,6 +461,7 @@ func TestGenerateSavesTheProfileAndScoresTheResult(t *testing.T) {
 	s, _, c, st, _ := setup()
 	r := toResults(t, s, c)
 	if r.Step != StepResults || r.Result.Points != 2 || r.Result.Split[0].Points != 1 ||
+		r.Result.SplitReason != "Status is its own behaviour a user can check." ||
 		!slices.Equal(r.Result.AcceptanceCriteria, []string{"Support can refund a payment."}) {
 		t.Fatalf("result = %+v", r.Result)
 	}

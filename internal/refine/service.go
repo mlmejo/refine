@@ -1011,6 +1011,7 @@ func tidy(r Result) Result {
 	}
 	r.AcceptanceCriteria = clean(r.AcceptanceCriteria)
 	r.DeployNeeds = clean(r.DeployNeeds)
+	r.SplitReason = strings.TrimSpace(r.SplitReason)
 	if r.TechnicalImplementation == nil {
 		r.TechnicalImplementation = []RepoFiles{}
 	}

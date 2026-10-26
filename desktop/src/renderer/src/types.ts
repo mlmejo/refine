@@ -87,6 +87,7 @@ export type Result = {
   ratings: Ratings
   points: number
   split: Child[] | null
+  split_reason?: string
   deploy_needs: string[] | null
 }
 
