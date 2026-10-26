@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-func TestSearchSendsJQLAndDecodesIssues(t *testing.T) {
+func TestTicketsSendsJQLAndDecodesIssues(t *testing.T) {
 	var got struct {
 		JQL    string   `json:"jql"`
 		Fields []string `json:"fields"`
@@ -45,7 +45,7 @@ func TestSearchSendsJQLAndDecodesIssues(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL, "me@example.com", "secret")
-	issues, err := client.Search(context.Background(), ListJQL("Refinement Ready - Team John"))
+	tickets, err := client.Tickets(context.Background(), ListJQL("Refinement Ready - Team John"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestSearchSendsJQLAndDecodesIssues(t *testing.T) {
 	if got.JQL != `assignee = currentUser() AND resolution = Unresolved AND sprint = "Refinement Ready - Team John" ORDER BY updated DESC` {
 		t.Errorf("jql = %q", got.JQL)
 	}
-	if !strings.Contains(strings.Join(got.Fields, ","), FieldStoryPointCriteria) {
+	if fields := strings.Join(got.Fields, ","); !strings.Contains(fields, FieldStoryPointCriteria) || !strings.Contains(fields, "description") || !strings.Contains(fields, "issuelinks") {
 		t.Errorf("fields = %v", got.Fields)
 	}
 
@@ -64,19 +64,19 @@ func TestSearchSendsJQLAndDecodesIssues(t *testing.T) {
 		AcceptanceCriteria:      "* Clicking Delete Account is recorded.",
 		TechnicalImplementation: "dating\n* components/a.vue\n* components/b.vue (new)",
 	}
-	if len(issues) != 1 || issues[0] != want {
-		t.Errorf("issues = %#v", issues)
+	if len(tickets) != 1 || tickets[0].Issue != want {
+		t.Errorf("tickets = %#v", tickets)
 	}
 }
 
-func TestSearchReportsJiraErrors(t *testing.T) {
+func TestTicketsReportsJiraErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`{"errorMessages":["The value 'Nope' does not exist for the field 'status'."]}`))
 	}))
 	defer server.Close()
 
-	_, err := New(server.URL, "me", "t").Search(context.Background(), "status = Nope")
+	_, err := New(server.URL, "me", "t").Tickets(context.Background(), "status = Nope")
 	if err == nil || !strings.Contains(err.Error(), "does not exist for the field 'status'") {
 		t.Errorf("err = %v", err)
 	}

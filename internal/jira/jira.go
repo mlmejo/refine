@@ -156,16 +156,6 @@ func CandidatesJQL(key string, sprints ...string) string {
 	return fmt.Sprintf(`assignee = currentUser() AND resolution = Unresolved AND sprint in (%s) AND key != %s ORDER BY key ASC`, strings.Join(quoted, ", "), quote(key))
 }
 
-// Search runs a JQL query and returns the matching issues.
-func (c *Client) Search(ctx context.Context, jql string) ([]Issue, error) {
-	tickets, err := c.search(ctx, jql)
-	issues := make([]Issue, len(tickets))
-	for i, ticket := range tickets {
-		issues[i] = ticket.Issue
-	}
-	return issues, err
-}
-
 // Tickets runs a JQL query and returns the matching tickets with their
 // descriptions, points and links, but no comments.
 func (c *Client) Tickets(ctx context.Context, jql string) ([]Ticket, error) {
