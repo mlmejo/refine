@@ -27,11 +27,12 @@ import (
 	"github.com/mlmejo/refine/internal/version"
 )
 
-// Repos reads and changes the configured repos.
-type Repos struct {
-	List   func() map[string]string
-	Add    func(name, dir string) error
-	Remove func(name string) error
+// Repos reads and changes the configured repos. List returns a map the
+// caller may keep.
+type Repos interface {
+	List() map[string]string
+	Add(name, dir string) error
+	Remove(name string) error
 }
 
 // Info is what the app shows about this refine.
@@ -55,6 +56,8 @@ type Server struct {
 	hidden map[string]bool
 	job    *job
 	nextID int
+	// stamping holds the tickets being written to Jira.
+	stamping map[string]bool
 }
 
 // New returns a server with a fresh random token. hidden are the keys
@@ -62,7 +65,7 @@ type Server struct {
 func New(info Info, service *refine.Service, repos Repos, hidden []string, saveHidden func([]string) error) *Server {
 	token := make([]byte, 24)
 	_, _ = rand.Read(token)
-	s := &Server{Info: info, Service: service, Repos: repos, SaveHidden: saveHidden, Token: hex.EncodeToString(token), hidden: map[string]bool{}}
+	s := &Server{Info: info, Service: service, Repos: repos, SaveHidden: saveHidden, Token: hex.EncodeToString(token), hidden: map[string]bool{}, stamping: map[string]bool{}}
 	for _, key := range hidden {
 		s.hidden[key] = true
 	}
@@ -85,7 +88,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tickets/{key}", s.open)
 	mux.HandleFunc("DELETE /api/tickets/{key}", s.reset)
 	mux.HandleFunc("PUT /api/tickets/{key}/decisions", s.decide)
-	mux.HandleFunc("POST /api/tickets/{key}/continue", s.continue_)
+	mux.HandleFunc("POST /api/tickets/{key}/continue", s.advance)
 	mux.HandleFunc("PUT /api/tickets/{key}/repos", s.setRepos)
 	mux.HandleFunc("POST /api/tickets/{key}/suggestion", s.suggest)
 	mux.HandleFunc("DELETE /api/tickets/{key}/sync", s.chooseRepos)
@@ -215,6 +218,11 @@ func (s *Server) setHidden(key string, hide bool) error {
 func (s *Server) open(w http.ResponseWriter, r *http.Request) {
 	view, err := s.Service.Open(r.Context(), r.PathValue("key"))
 	if err != nil {
+		var apiErr *jira.APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			fail(w, http.StatusNotFound, err)
+			return
+		}
 		fail(w, http.StatusBadGateway, err)
 		return
 	}
@@ -222,12 +230,12 @@ func (s *Server) open(w http.ResponseWriter, r *http.Request) {
 }
 
 // describe replies with the refinement after a change.
-func (s *Server) describe(w http.ResponseWriter, key string, err error) {
+func (s *Server) describe(ctx context.Context, w http.ResponseWriter, key string, err error) {
 	if err != nil {
 		failFor(w, err)
 		return
 	}
-	view, err := s.Service.Describe(key)
+	view, err := s.Service.Describe(ctx, key)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
@@ -240,7 +248,7 @@ func (s *Server) reset(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, errors.New("cancel the running step first"))
 		return
 	}
-	if err := s.Service.Reset(r.PathValue("key")); err != nil {
+	if err := s.Service.Reset(r.Context(), r.PathValue("key")); err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -256,26 +264,26 @@ func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	_, err := s.Service.Decide(key, body.Blocker, body.Decision)
-	s.describe(w, key, err)
+	_, err := s.Service.Decide(r.Context(), key, body.Blocker, body.Decision)
+	s.describe(r.Context(), w, key, err)
 }
 
-func (s *Server) continue_(w http.ResponseWriter, r *http.Request) {
+func (s *Server) advance(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	_, err := s.Service.Continue(r.Context(), key)
-	s.describe(w, key, err)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) restartQuestions(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	_, err := s.Service.RestartQuestions(key)
-	s.describe(w, key, err)
+	_, err := s.Service.RestartQuestions(r.Context(), key)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) chooseRepos(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	_, err := s.Service.ChooseRepos(key)
-	s.describe(w, key, err)
+	_, err := s.Service.ChooseRepos(r.Context(), key)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) setRepos(w http.ResponseWriter, r *http.Request) {
@@ -286,20 +294,20 @@ func (s *Server) setRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	_, err := s.Service.SetRepos(key, body.Repos)
-	s.describe(w, key, err)
+	_, err := s.Service.SetRepos(r.Context(), key, body.Repos)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) suggest(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	_, err := s.Service.Suggest(r.Context(), key)
-	s.describe(w, key, err)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) sync(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	_, err := s.Service.Sync(r.Context(), key)
-	s.describe(w, key, err)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) answers(w http.ResponseWriter, r *http.Request) {
@@ -308,8 +316,8 @@ func (s *Server) answers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	_, err := s.Service.Answer(key, body)
-	s.describe(w, key, err)
+	_, err := s.Service.Answer(r.Context(), key, body)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) edit(w http.ResponseWriter, r *http.Request) {
@@ -318,20 +326,28 @@ func (s *Server) edit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	_, err := s.Service.Edit(key, body)
-	s.describe(w, key, err)
+	_, err := s.Service.Edit(r.Context(), key, body)
+	s.describe(r.Context(), w, key, err)
 }
+
+// stampTimeout bounds one stamp's Jira writes.
+const stampTimeout = 2 * time.Minute
 
 // stamp writes to Jira. A failed action comes back in the refinement's
 // stamp progress, not as an error, so the app can offer a retry.
 func (s *Server) stamp(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	if s.busy(key) {
+	if !s.claim(key) {
 		fail(w, http.StatusConflict, errors.New("a step is running on this ticket"))
 		return
 	}
-	_, err := s.Service.Stamp(r.Context(), key)
-	s.describe(w, key, err)
+	defer s.release(key)
+	// The Jira writes must not stop halfway because the app dropped the
+	// request: a create cut off mid-flight may still have made the ticket.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), stampTimeout)
+	defer cancel()
+	_, err := s.Service.Stamp(ctx, key)
+	s.describe(ctx, w, key, err)
 }
 
 type repo struct {
@@ -341,7 +357,7 @@ type repo struct {
 
 func (s *Server) repos(w http.ResponseWriter, r *http.Request) {
 	all := s.Repos.List()
-	profiles, err := s.Service.Profiles()
+	profiles, err := s.Service.Profiles(r.Context())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
@@ -436,7 +452,7 @@ func (s *Server) setProfile(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, fmt.Errorf("no repo named %s", name))
 		return
 	}
-	if err := s.Service.SetProfile(refine.Profile{Repo: name, Answers: body.Answers}); err != nil {
+	if err := s.Service.SetProfile(r.Context(), refine.Profile{Repo: name, Answers: body.Answers}); err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -519,10 +535,32 @@ func (s *Server) Close() {
 	}
 }
 
+// busy reports whether a job or a stamp is running on the ticket.
 func (s *Server) busy(key string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.job != nil && !s.job.Done && s.job.Key == key
+	return s.busyLocked(key)
+}
+
+func (s *Server) busyLocked(key string) bool {
+	return s.stamping[key] || s.job != nil && !s.job.Done && s.job.Key == key
+}
+
+// claim marks the ticket as stamping, unless something runs on it already.
+func (s *Server) claim(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.busyLocked(key) {
+		return false
+	}
+	s.stamping[key] = true
+	return true
+}
+
+func (s *Server) release(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.stamping, key)
 }
 
 // currentJob replies with the running job, or the last one until the app
@@ -596,6 +634,11 @@ func (s *Server) startJob(w http.ResponseWriter, r *http.Request) {
 		running := *s.job
 		s.mu.Unlock()
 		fail(w, http.StatusConflict, fmt.Errorf("Claude is already working on %s", running.Key)) //nolint:staticcheck // ST1005: Claude is a name.
+		return
+	}
+	if s.stamping[body.Key] {
+		s.mu.Unlock()
+		fail(w, http.StatusConflict, fmt.Errorf("%s is being stamped", body.Key))
 		return
 	}
 	s.nextID++
