@@ -92,7 +92,7 @@ func (s *Service) act(ctx context.Context, r Refinement, id string, target **jir
 		return "", s.Jira.Update(ctx, r.Key, fields(res.AcceptanceCriteria, res.TechnicalImplementation, res.Decisions, res.Ratings, res.Points))
 	case id == "comment":
 		body := DeployComment(res.DeployNeeds)
-		t, err := s.Jira.GetTicket(ctx, r.Key)
+		t, err := s.Jira.Ticket(ctx, r.Key)
 		if err != nil || t.HasComment(body) {
 			return "", err
 		}

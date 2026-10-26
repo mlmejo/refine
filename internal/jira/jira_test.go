@@ -113,7 +113,7 @@ func TestMyselfReturnsDisplayName(t *testing.T) {
 	}
 }
 
-func TestGetTicketReadsDescriptionPointsCommentsAndLinks(t *testing.T) {
+func TestTicketReadsDescriptionPointsCommentsAndLinks(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/rest/api/3/issue/GEEK-7" {
 			t.Errorf("path = %s", r.URL.Path)
@@ -144,7 +144,7 @@ func TestGetTicketReadsDescriptionPointsCommentsAndLinks(t *testing.T) {
 	}))
 	defer server.Close()
 
-	ticket, err := New(server.URL, "me", "t").GetTicket(context.Background(), "GEEK-7")
+	ticket, err := New(server.URL, "me", "t").Ticket(context.Background(), "GEEK-7")
 	if err != nil {
 		t.Fatal(err)
 	}

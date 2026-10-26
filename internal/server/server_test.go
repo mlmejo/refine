@@ -28,7 +28,7 @@ func (f fakeJira) Linked(context.Context, string) ([]jira.Ticket, error) {
 func (f fakeJira) Tickets(context.Context, string) ([]jira.Ticket, error) {
 	return []jira.Ticket{f.tickets["GEEK-100"]}, nil
 }
-func (f fakeJira) GetTicket(_ context.Context, key string) (jira.Ticket, error) {
+func (f fakeJira) Ticket(_ context.Context, key string) (jira.Ticket, error) {
 	t, ok := f.tickets[key]
 	if !ok {
 		return jira.Ticket{}, errors.New("no " + key)

@@ -48,7 +48,7 @@ func (f *fakeJira) Tickets(_ context.Context, jql string) ([]jira.Ticket, error)
 	}
 	return out, nil
 }
-func (f *fakeJira) GetTicket(_ context.Context, key string) (jira.Ticket, error) {
+func (f *fakeJira) Ticket(_ context.Context, key string) (jira.Ticket, error) {
 	t, ok := f.tickets[key]
 	if !ok {
 		return jira.Ticket{}, fmt.Errorf("no %s", key)
