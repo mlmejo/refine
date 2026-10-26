@@ -34,6 +34,7 @@ export const api = {
   proceed: (k: string) => call<View>('POST', `${ticket(k)}/continue`),
   setRepos: (k: string, repos: string[]) => call<View>('PUT', `${ticket(k)}/repos`, { repos }),
   sync: (k: string) => call<View>('POST', `${ticket(k)}/sync`),
+  restartQuestions: (k: string) => call<View>('DELETE', `${ticket(k)}/rounds`),
   answer: (k: string, answers: Answers) => call<View>('PUT', `${ticket(k)}/answers`, answers),
   edit: (k: string, result: Result) => call<View>('PUT', `${ticket(k)}/result`, result),
   stamp: (k: string) => call<View>('POST', `${ticket(k)}/stamp`),

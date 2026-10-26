@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api } from '../../api'
+import { flags } from '../../flags'
 import { useRefine } from '../../store'
 import type { View } from '../../types'
 import { QuestionCard, useAnswers, useQuestionKeys } from './QuestionCard'
@@ -28,6 +29,10 @@ export function Questions({ view, readOnly }: { view: View; readOnly: boolean })
     if (left > 0 || pending.length > 0 || refine.pending) return
     await flush()
     void refine.run('ask', key)
+  }
+  const rerun = async () => {
+    if (refine.pending) return
+    if (await refine.act(key, 'restart', () => api.restartQuestions(key))) void refine.run('ask', key)
   }
   useQuestionKeys(questions, answers, focus, setFocus, set, () => void submit(), current)
 
@@ -107,6 +112,11 @@ export function Questions({ view, readOnly }: { view: View; readOnly: boolean })
               <span className="muted small">
                 {questions.length - left} of {questions.length} answered
               </span>
+              {flags.rerunQuestions && current && (
+                <button className="btn" style={{ marginLeft: 'auto' }} disabled={!!refine.pending} onClick={() => void rerun()}>
+                  Re-run questions
+                </button>
+              )}
             </div>
             {questions.map((q, i) => (
               <QuestionCard

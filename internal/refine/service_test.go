@@ -370,6 +370,25 @@ func TestAskMovesOnWhenClaudeHasNoQuestions(t *testing.T) {
 	}
 }
 
+func TestRestartQuestionsAsksRoundOneFresh(t *testing.T) {
+	s, _, c, _, _ := setup()
+	c.answers = []any{
+		map[string]any{"questions": []map[string]any{question("Bad?", "a", "b")}},
+		map[string]any{"questions": []map[string]any{question("Better?", "a", "b")}},
+	}
+	toQuestions(t, s, c)
+	ctx := context.Background()
+	s.Ask(ctx, "GEEK-101", nil)
+	r, err := s.RestartQuestions("GEEK-101")
+	if err != nil || len(r.Rounds) != 0 || r.QuestionSession != "" {
+		t.Fatalf("restart: %+v %v", r, err)
+	}
+	r, err = s.Ask(ctx, "GEEK-101", nil)
+	if err != nil || len(r.Rounds) != 1 || r.Rounds[0].Questions[0].Text != "Better?" || c.calls[len(c.calls)-1].Session != "" {
+		t.Fatalf("ask after restart: %+v %v", r, err)
+	}
+}
+
 func deployAnswer() map[string]any {
 	return map[string]any{
 		"repo_questions": []map[string]any{

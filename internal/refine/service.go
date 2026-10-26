@@ -607,6 +607,18 @@ func (s *Service) Ask(ctx context.Context, key string, progress func(claude.Acti
 	})
 }
 
+// RestartQuestions drops every round and the session behind them, so the
+// next Ask reads the code fresh. Decided blockers stay decided.
+func (s *Service) RestartQuestions(key string) (Refinement, error) {
+	return s.update(key, func(r *Refinement) error {
+		if r.Step != StepQuestions {
+			return fmt.Errorf("questions: %w", ErrStep)
+		}
+		r.Rounds, r.QuestionSession = nil, ""
+		return nil
+	})
+}
+
 // found turns the blockers Claude reported while reading the code into
 // blockers for the developer to decide: only other open tickets, and none
 // already decided or proposed.
