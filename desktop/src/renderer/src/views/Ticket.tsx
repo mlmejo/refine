@@ -38,7 +38,7 @@ function StepBar({ view, viewing, onView }: { view: View; viewing: Step; onView:
             )}
             <button
               className={`step-pill ${state} ${viewing === step && done ? 'viewing' : ''}`}
-              disabled={!done}
+              disabled={state === 'todo'}
               aria-current={state === 'current' ? 'step' : undefined}
               onClick={() => onView(step)}
             >
