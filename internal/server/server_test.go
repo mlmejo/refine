@@ -62,8 +62,8 @@ func (c slowClaude) Do(ctx context.Context, call claude.Call, into any, progress
 
 type noGit struct{}
 
-func (noGit) Fetch(_ context.Context, name, dir string) gitsync.Status {
-	return gitsync.Status{Name: name, Dir: dir, Branch: "develop", Commit: "abc"}
+func (noGit) Fetch(_ context.Context, name, dir string) (gitsync.Status, error) {
+	return gitsync.Status{Name: name, Dir: dir, Branch: "develop", Commit: "abc"}, nil
 }
 func (noGit) Checkout(context.Context, string, string, string) error { return nil }
 
