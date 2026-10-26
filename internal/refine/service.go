@@ -367,7 +367,7 @@ func (s *Service) Search(ctx context.Context, key, explanation string, progress 
 	for _, c := range candidates {
 		byKey[c.Key] = c
 	}
-	decided := map[string]string{}
+	decided := map[string]Decision{}
 	for _, b := range r.Related.Blockers {
 		decided[b.Key] = b.Decision
 	}
@@ -403,7 +403,7 @@ func (s *Service) Search(ctx context.Context, key, explanation string, progress 
 // the code is decided on the questions step; accepting it takes the ticket
 // back through the related step, since the questions so far did not build on
 // that ticket's work.
-func (s *Service) Decide(key, blocker, decision string) (Refinement, error) {
+func (s *Service) Decide(key, blocker string, decision Decision) (Refinement, error) {
 	if decision != Accepted && decision != Rejected {
 		return Refinement{}, fmt.Errorf("decision %q is not %s or %s", decision, Accepted, Rejected)
 	}

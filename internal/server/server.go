@@ -249,8 +249,8 @@ func (s *Server) reset(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Blocker  string `json:"blocker"`
-		Decision string `json:"decision"`
+		Blocker  string          `json:"blocker"`
+		Decision refine.Decision `json:"decision"`
 	}
 	if !decode(w, r, &body) {
 		return

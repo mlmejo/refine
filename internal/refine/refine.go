@@ -92,20 +92,23 @@ type SuggestedRepo struct {
 	Reason string `json:"reason"`
 }
 
+// Decision is the developer's decision on a blocker.
+type Decision string
+
 // Decisions on a blocker.
 const (
-	Accepted = "accepted"
-	Rejected = "rejected"
+	Accepted Decision = "accepted"
+	Rejected Decision = "rejected"
 )
 
 // Blocker is a ticket this one builds on.
 type Blocker struct {
-	Key      string `json:"key"`
-	Summary  string `json:"summary"`
-	Reason   string `json:"reason"`
-	Quote    string `json:"quote"`
-	Refined  bool   `json:"refined"`
-	Decision string `json:"decision,omitempty"`
+	Key      string   `json:"key"`
+	Summary  string   `json:"summary"`
+	Reason   string   `json:"reason"`
+	Quote    string   `json:"quote"`
+	Refined  bool     `json:"refined"`
+	Decision Decision `json:"decision,omitempty"`
 	// FromCode marks a blocker Claude found while reading the code for the
 	// questions, rather than in the search.
 	FromCode bool `json:"from_code,omitempty"`
