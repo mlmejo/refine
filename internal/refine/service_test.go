@@ -614,14 +614,21 @@ func TestListReadsTheReadySprintWithPoints(t *testing.T) {
 }
 
 func TestPlanListsEveryJiraWrite(t *testing.T) {
-	r := Refinement{Key: "GEEK-1", Result: &Result{Points: 1, Split: []Child{{Title: "A - B"}}}}
+	r := Refinement{Key: "GEEK-1", Result: &Result{Points: 1, Split: []Child{{Title: "A - B"}, {Title: "A - C"}}}}
 	r.Related.Blockers = []Blocker{{Key: "GEEK-2", Decision: Accepted}, {Key: "GEEK-3", Decision: Rejected}}
-	var ids []string
+	var got []string
 	for _, a := range Plan(r) {
-		ids = append(ids, a.ID)
+		got = append(got, fmt.Sprintf("%s %d %d %s", a.ID, a.Kind, a.Index, a.Key))
 	}
-	if !slices.Equal(ids, []string{"write", "child:0", "link:GEEK-2", "move"}) {
-		t.Fatalf("plan = %v", ids)
+	want := []string{
+		fmt.Sprintf("write %d 0 ", ActionWrite),
+		fmt.Sprintf("child:0 %d 0 ", ActionChild),
+		fmt.Sprintf("child:1 %d 1 ", ActionChild),
+		fmt.Sprintf("link:GEEK-2 %d 0 GEEK-2", ActionLink),
+		fmt.Sprintf("move %d 0 ", ActionMove),
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("plan = %q", got)
 	}
 }
 
