@@ -236,7 +236,7 @@ export function Results({ view, readOnly }: { view: View; readOnly: boolean }) {
             <section className="section">
               <div className="section-head">
                 <h2>Technical Implementation</h2>
-                {!locked && <span className="muted small">One path per line; mark new files with (new).</span>}
+                {!locked && <span className="muted small">One path per line; mark new files with (new). Decisions go below the ---.</span>}
               </div>
               {!locked && <FormatPicker field="ti" />}
               <div className="files">
@@ -258,6 +258,15 @@ export function Results({ view, readOnly }: { view: View; readOnly: boolean }) {
                   </div>
                 ))}
                 {repos.length === 0 && <span className="muted">No files.</span>}
+                <span className="rule" aria-hidden="true">
+                  ---
+                </span>
+                <Lines
+                  lines={result.decisions ?? []}
+                  readOnly={locked}
+                  placeholder="Decision"
+                  onChange={(lines) => change({ ...result, decisions: lines })}
+                />
               </div>
             </section>
 

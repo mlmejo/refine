@@ -669,7 +669,8 @@ kbd {
   margin: 12px 0 4px;
   font-size: 13px;
 }
-.md-doc hr {
+.md-doc hr,
+.section hr {
   border: 0;
   border-top: 1px solid var(--border);
 }
@@ -887,6 +888,15 @@ kbd {
 }
 .files .repo:not(:first-child) {
   margin-top: 6px;
+}
+.files .rule {
+  margin-top: 6px;
+  color: var(--muted);
+}
+.files .ac-list {
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--text);
 }
 .ratings {
   border: 1px solid var(--border);

@@ -89,7 +89,7 @@ func (s *Service) act(ctx context.Context, r Refinement, id string, target **jir
 	res := r.Result
 	switch {
 	case id == "write":
-		return "", s.Jira.Update(ctx, r.Key, fields(res.AcceptanceCriteria, res.TechnicalImplementation, res.Ratings, res.Points))
+		return "", s.Jira.Update(ctx, r.Key, fields(res.AcceptanceCriteria, res.TechnicalImplementation, res.Decisions, res.Ratings, res.Points))
 	case id == "comment":
 		body := DeployComment(res.DeployNeeds)
 		t, err := s.Jira.GetTicket(ctx, r.Key)
@@ -110,7 +110,7 @@ func (s *Service) act(ctx context.Context, r Refinement, id string, target **jir
 		return s.Jira.CreateChild(ctx, **target, jira.NewChild{
 			Summary:     c.Title,
 			Description: fmt.Sprintf("Split from %s (%s), which holds the foundation this builds on.", r.Key, r.Summary),
-			Refinement:  fields(c.AcceptanceCriteria, c.TechnicalImplementation, c.Ratings, c.Points),
+			Refinement:  fields(c.AcceptanceCriteria, c.TechnicalImplementation, c.Decisions, c.Ratings, c.Points),
 		})
 	case strings.HasPrefix(id, "link:"):
 		return "", s.Jira.Relate(ctx, r.Key, strings.TrimPrefix(id, "link:"))
@@ -122,7 +122,7 @@ func (s *Service) act(ctx context.Context, r Refinement, id string, target **jir
 
 // fields is a ticket's refinement as Jira's fields take it. The fields
 // render plain text, so nothing here is markdown.
-func fields(criteria []string, repos []RepoFiles, ratings Ratings, points int) jira.Refinement {
+func fields(criteria []string, repos []RepoFiles, decisions []string, ratings Ratings, points int) jira.Refinement {
 	var ac strings.Builder
 	for _, item := range criteria {
 		ac.WriteString("* " + item + "\n")
@@ -139,6 +139,12 @@ func fields(criteria []string, repos []RepoFiles, ratings Ratings, points int) j
 				line += " (new)"
 			}
 			ti.WriteString(line + "\n")
+		}
+	}
+	if len(decisions) > 0 {
+		ti.WriteString("\n---\n\n")
+		for _, d := range decisions {
+			ti.WriteString("* " + d + "\n")
 		}
 	}
 	var spc []string

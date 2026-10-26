@@ -78,6 +78,7 @@ export type Child = {
   title: string
   acceptance_criteria: string[] | null
   technical_implementation: RepoFiles[] | null
+  decisions: string[] | null
   ratings: Ratings
   points: number
 }
@@ -85,6 +86,7 @@ export type Child = {
 export type Result = {
   acceptance_criteria: string[] | null
   technical_implementation: RepoFiles[] | null
+  decisions: string[] | null
   ratings: Ratings
   points: number
   split: Child[] | null

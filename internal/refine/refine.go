@@ -219,6 +219,7 @@ type QA struct {
 type Result struct {
 	AcceptanceCriteria      []string    `json:"acceptance_criteria"`
 	TechnicalImplementation []RepoFiles `json:"technical_implementation"`
+	Decisions               []string    `json:"decisions"`
 	Ratings                 Ratings     `json:"ratings"`
 	Points                  int         `json:"points"`
 	Split                   []Child     `json:"split"`
@@ -231,6 +232,7 @@ type Child struct {
 	Title                   string      `json:"title"`
 	AcceptanceCriteria      []string    `json:"acceptance_criteria"`
 	TechnicalImplementation []RepoFiles `json:"technical_implementation"`
+	Decisions               []string    `json:"decisions"`
 	Ratings                 Ratings     `json:"ratings"`
 	Points                  int         `json:"points"`
 }

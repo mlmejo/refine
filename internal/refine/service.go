@@ -1015,9 +1015,11 @@ func (s *Service) Rewrite(ctx context.Context, key string, progress func(claude.
 	var rewritten struct {
 		AcceptanceCriteria      []string    `json:"acceptance_criteria"`
 		TechnicalImplementation []RepoFiles `json:"technical_implementation"`
+		Decisions               []string    `json:"decisions"`
 		Split                   []struct {
 			AcceptanceCriteria      []string    `json:"acceptance_criteria"`
 			TechnicalImplementation []RepoFiles `json:"technical_implementation"`
+			Decisions               []string    `json:"decisions"`
 		} `json:"split"`
 	}
 	run, err := s.Claude.Do(ctx, claude.Call{
@@ -1039,10 +1041,12 @@ func (s *Service) Rewrite(ctx context.Context, key string, progress func(claude.
 		next := *r.Result
 		next.AcceptanceCriteria = rewritten.AcceptanceCriteria
 		next.TechnicalImplementation = rewritten.TechnicalImplementation
+		next.Decisions = rewritten.Decisions
 		next.Split = slices.Clone(next.Split)
 		for i, c := range rewritten.Split {
 			next.Split[i].AcceptanceCriteria = c.AcceptanceCriteria
 			next.Split[i].TechnicalImplementation = c.TechnicalImplementation
+			next.Split[i].Decisions = c.Decisions
 		}
 		next = tidy(next).Scored()
 		r.CostUSD += run.CostUSD
@@ -1064,6 +1068,7 @@ func tidy(r Result) Result {
 	}
 	r.AcceptanceCriteria = clean(r.AcceptanceCriteria)
 	r.DeployNeeds = clean(r.DeployNeeds)
+	r.Decisions = clean(r.Decisions)
 	r.SplitReason = strings.TrimSpace(r.SplitReason)
 	if r.TechnicalImplementation == nil {
 		r.TechnicalImplementation = []RepoFiles{}
@@ -1075,6 +1080,7 @@ func tidy(r Result) Result {
 			continue
 		}
 		c.AcceptanceCriteria = clean(c.AcceptanceCriteria)
+		c.Decisions = clean(c.Decisions)
 		if c.TechnicalImplementation == nil {
 			c.TechnicalImplementation = []RepoFiles{}
 		}
@@ -1094,6 +1100,7 @@ func (s *Service) Edit(key string, edited Result) (Refinement, error) {
 		next := *r.Result
 		next.AcceptanceCriteria = edited.AcceptanceCriteria
 		next.TechnicalImplementation = edited.TechnicalImplementation
+		next.Decisions = edited.Decisions
 		next.Ratings = edited.Ratings
 		next.DeployNeeds = edited.DeployNeeds
 		for i := range next.Split {

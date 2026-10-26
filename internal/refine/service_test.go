@@ -627,8 +627,9 @@ func TestPlanListsEveryJiraWrite(t *testing.T) {
 
 func TestFieldsFollowJiraLayout(t *testing.T) {
 	f := fields([]string{"One.", "Two."}, []RepoFiles{{Repo: "a", Files: []File{{Path: "x.go", New: true}, {Path: "y.go"}}}},
+		[]string{"Soft delete, keep 30 days"},
 		Ratings{Novelty: "Medium", Risk: "Medium", Dependency: "Low", Testing: "Medium", Deployment: "Low"}, 2)
-	if f.AcceptanceCriteria != "* One.\n* Two." || f.TechnicalImplementation != "a\n\n* x.go (new)\n* y.go" ||
+	if f.AcceptanceCriteria != "* One.\n* Two." || f.TechnicalImplementation != "a\n\n* x.go (new)\n* y.go\n\n---\n\n* Soft delete, keep 30 days" ||
 		!strings.HasSuffix(f.StoryPointCriteria, "Deployment Complexity: Low\nTotal: Medium (1.6)") {
 		t.Fatalf("fields = %+v", f)
 	}
