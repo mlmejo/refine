@@ -24,17 +24,26 @@ headless and read-only) only judges.
 - macOS
 - Go 1.26
 - Node and pnpm
+- `make`, from the Xcode Command Line Tools (`xcode-select --install`), which
+  `git` needs too
 - [Claude Code](https://claude.com/claude-code) (`claude`) and `git` on your
   login shell's PATH
 - An Atlassian API token
 
 ## Setup
 
-Create `~/.config/refine/config.toml`:
+Copy the example config and put your email in it:
+
+```sh
+mkdir -p ~/.config/refine
+cp config.toml.example ~/.config/refine/config.toml
+```
+
+Every key it takes:
 
 ```toml
 [jira]
-site = "your-site.atlassian.net"
+site = "geekee.atlassian.net"
 email = "you@example.com"
 # Optional; these are the defaults.
 project = "GEEK"
@@ -46,8 +55,11 @@ api = "~/develop/api"
 web = "~/develop/web"
 ```
 
-Repos can also be added and removed from the app. Put the token in `.env` at
-the repo root, or export it:
+Repos can also be added and removed from the app.
+
+Create an API token in your
+[Atlassian account's security settings](https://id.atlassian.com/manage-profile/security/api-tokens).
+Put it in `.env` at the repo root, or export it:
 
 ```sh
 REFINE_JIRA_TOKEN=...
@@ -61,10 +73,8 @@ page, then Regenerate AC & TI to rewrite them with it.
 ## Run
 
 ```sh
-cd desktop
-pnpm install
-pnpm dev     # builds bin/refine, then runs the app with hot reload
-pnpm dist    # builds dist/mac*/refine.app with the binary bundled
+make dev     # installs the app's packages, builds bin/refine, runs the app with hot reload
+make dist    # builds desktop/dist/mac*/refine.app with the binary bundled
 ```
 
 See [desktop/README.md](desktop/README.md) for how the app talks to the
@@ -92,8 +102,7 @@ spike               the original headless-Claude spike
 ## Test
 
 ```sh
-go test ./...
-cd desktop && pnpm typecheck
+make test    # go test ./... and the app's typecheck
 ```
 
 ## Flags
