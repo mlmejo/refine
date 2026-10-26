@@ -222,12 +222,12 @@ func (s *Server) open(w http.ResponseWriter, r *http.Request) {
 }
 
 // describe replies with the refinement after a change.
-func (s *Server) describe(w http.ResponseWriter, key string, err error) {
+func (s *Server) describe(ctx context.Context, w http.ResponseWriter, key string, err error) {
 	if err != nil {
 		failFor(w, err)
 		return
 	}
-	view, err := s.Service.Describe(key)
+	view, err := s.Service.Describe(ctx, key)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
@@ -240,7 +240,7 @@ func (s *Server) reset(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, errors.New("cancel the running step first"))
 		return
 	}
-	if err := s.Service.Reset(r.PathValue("key")); err != nil {
+	if err := s.Service.Reset(r.Context(), r.PathValue("key")); err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -256,26 +256,26 @@ func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	_, err := s.Service.Decide(key, body.Blocker, body.Decision)
-	s.describe(w, key, err)
+	_, err := s.Service.Decide(r.Context(), key, body.Blocker, body.Decision)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) continue_(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	_, err := s.Service.Continue(r.Context(), key)
-	s.describe(w, key, err)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) restartQuestions(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	_, err := s.Service.RestartQuestions(key)
-	s.describe(w, key, err)
+	_, err := s.Service.RestartQuestions(r.Context(), key)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) chooseRepos(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	_, err := s.Service.ChooseRepos(key)
-	s.describe(w, key, err)
+	_, err := s.Service.ChooseRepos(r.Context(), key)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) setRepos(w http.ResponseWriter, r *http.Request) {
@@ -286,20 +286,20 @@ func (s *Server) setRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	_, err := s.Service.SetRepos(key, body.Repos)
-	s.describe(w, key, err)
+	_, err := s.Service.SetRepos(r.Context(), key, body.Repos)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) suggest(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	_, err := s.Service.Suggest(r.Context(), key)
-	s.describe(w, key, err)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) sync(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	_, err := s.Service.Sync(r.Context(), key)
-	s.describe(w, key, err)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) answers(w http.ResponseWriter, r *http.Request) {
@@ -308,8 +308,8 @@ func (s *Server) answers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	_, err := s.Service.Answer(key, body)
-	s.describe(w, key, err)
+	_, err := s.Service.Answer(r.Context(), key, body)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) edit(w http.ResponseWriter, r *http.Request) {
@@ -318,8 +318,8 @@ func (s *Server) edit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	_, err := s.Service.Edit(key, body)
-	s.describe(w, key, err)
+	_, err := s.Service.Edit(r.Context(), key, body)
+	s.describe(r.Context(), w, key, err)
 }
 
 // stamp writes to Jira. A failed action comes back in the refinement's
@@ -331,7 +331,7 @@ func (s *Server) stamp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err := s.Service.Stamp(r.Context(), key)
-	s.describe(w, key, err)
+	s.describe(r.Context(), w, key, err)
 }
 
 type repo struct {
@@ -341,7 +341,7 @@ type repo struct {
 
 func (s *Server) repos(w http.ResponseWriter, r *http.Request) {
 	all := s.Repos.List()
-	profiles, err := s.Service.Profiles()
+	profiles, err := s.Service.Profiles(r.Context())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
@@ -436,7 +436,7 @@ func (s *Server) setProfile(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, fmt.Errorf("no repo named %s", name))
 		return
 	}
-	if err := s.Service.SetProfile(refine.Profile{Repo: name, Answers: body.Answers}); err != nil {
+	if err := s.Service.SetProfile(r.Context(), refine.Profile{Repo: name, Answers: body.Answers}); err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}

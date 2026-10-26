@@ -68,7 +68,7 @@ func Open() (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	db, err := store.Open(filepath.Join(state, "refine.db"))
+	db, err := store.Open(context.Background(), filepath.Join(state, "refine.db"))
 	if err != nil {
 		return nil, err
 	}

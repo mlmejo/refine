@@ -41,7 +41,7 @@ func Plan(r Refinement) []Action {
 // it finishes. A retry skips the actions already done. Once all are done the
 // ticket is stamped.
 func (s *Service) Stamp(ctx context.Context, key string) (Refinement, error) {
-	r, ok, err := s.Store.Load(key)
+	r, ok, err := s.Store.Load(ctx, key)
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -54,7 +54,7 @@ func (s *Service) Stamp(ctx context.Context, key string) (Refinement, error) {
 			continue
 		}
 		child, err := s.act(ctx, r, action.ID, &target)
-		r, err = s.update(key, func(r *Refinement) error {
+		r, err = s.update(ctx, key, func(r *Refinement) error {
 			if child != "" {
 				if r.Stamp.Children == nil {
 					r.Stamp.Children = map[int]string{}
@@ -77,7 +77,7 @@ func (s *Service) Stamp(ctx context.Context, key string) (Refinement, error) {
 			return r, nil
 		}
 	}
-	return s.update(key, func(r *Refinement) error {
+	return s.update(ctx, key, func(r *Refinement) error {
 		r.Step = StepStamped
 		return nil
 	})

@@ -69,7 +69,7 @@ func (noGit) Checkout(context.Context, string, string, string) error { return ni
 
 func setup(t *testing.T) (*Server, chan struct{}) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "refine.db"))
+	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "refine.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,5 +192,24 @@ func TestSetProfileNeedsAKnownRepo(t *testing.T) {
 	call(t, srv, "PUT", "/api/profiles/admin", `{"answers":[{"question":"How?","answer":"Forge"}]}`, &repos)
 	if len(repos) != 1 || repos[0]["profile"] == nil {
 		t.Fatalf("repos = %+v", repos)
+	}
+}
+
+func TestHandlersStopWhenTheRequestIsCancelled(t *testing.T) {
+	srv, _ := setup(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, path := range []string{"/api/tickets/GEEK-101", "/api/repos"} {
+		method := "DELETE"
+		if path == "/api/repos" {
+			method = "GET"
+		}
+		req := httptest.NewRequestWithContext(ctx, method, path, nil)
+		req.Header.Set("Authorization", "Bearer "+srv.Token)
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "context canceled") {
+			t.Errorf("%s %s = %d %s", method, path, rec.Code, rec.Body.String())
+		}
 	}
 }

@@ -39,12 +39,12 @@ type Claude interface {
 
 // Store keeps refinements and the repos' deployment profiles.
 type Store interface {
-	Load(key string) (Refinement, bool, error)
-	All() ([]Refinement, error)
-	Save(r Refinement) error
-	Delete(key string) error
-	Profiles() (map[string]Profile, error)
-	SaveProfile(p Profile) error
+	Load(ctx context.Context, key string) (Refinement, bool, error)
+	All(ctx context.Context) ([]Refinement, error)
+	Save(ctx context.Context, r Refinement) error
+	Delete(ctx context.Context, key string) error
+	Profiles(ctx context.Context) (map[string]Profile, error)
+	SaveProfile(ctx context.Context, p Profile) error
 }
 
 // Git fetches a repo and checks a commit out for Claude to read.
@@ -115,7 +115,7 @@ func (s *Service) List(ctx context.Context) (Page, error) {
 	if err != nil {
 		return Page{}, err
 	}
-	all, err := s.Store.All()
+	all, err := s.Store.All(ctx)
 	if err != nil {
 		return Page{}, err
 	}
@@ -227,7 +227,7 @@ func (s *Service) Open(ctx context.Context, key string) (View, error) {
 		return View{}, err
 	}
 	s.mu.Lock()
-	r, started, err := s.Store.Load(key)
+	r, started, err := s.Store.Load(ctx, key)
 	s.mu.Unlock()
 	if err != nil {
 		return View{}, err
@@ -240,11 +240,11 @@ func (s *Service) Open(ctx context.Context, key string) (View, error) {
 			return View{}, err
 		}
 	}
-	return s.view(t, r, started)
+	return s.view(ctx, t, r, started)
 }
 
-func (s *Service) view(t jira.Ticket, r Refinement, started bool) (View, error) {
-	profiles, err := s.Store.Profiles()
+func (s *Service) view(ctx context.Context, t jira.Ticket, r Refinement, started bool) (View, error) {
+	profiles, err := s.Store.Profiles(ctx)
 	if err != nil {
 		return View{}, err
 	}
@@ -253,7 +253,7 @@ func (s *Service) view(t jira.Ticket, r Refinement, started bool) (View, error) 
 		Ticket: TicketInfo{Key: t.Key, Summary: t.Summary, Status: t.Status,
 			DescriptionMD: t.DescriptionMarkdown, Links: t.Links},
 		Started:   started,
-		Suggested: s.suggested(r),
+		Suggested: s.suggested(ctx, r),
 		Plan:      Plan(r),
 	}
 	for _, name := range r.Repos {
@@ -266,7 +266,7 @@ func (s *Service) view(t jira.Ticket, r Refinement, started bool) (View, error) 
 
 // suggested are the repos picked for the tickets this one relates to, then
 // those Claude matched to the ticket's title and labels.
-func (s *Service) suggested(r Refinement) []SuggestedRepo {
+func (s *Service) suggested(ctx context.Context, r Refinement) []SuggestedRepo {
 	var keys []string
 	for _, b := range r.Related.Blockers {
 		if b.Decision != Rejected {
@@ -278,7 +278,7 @@ func (s *Service) suggested(r Refinement) []SuggestedRepo {
 	}
 	var related []string
 	for _, key := range keys {
-		other, ok, err := s.Store.Load(key)
+		other, ok, err := s.Store.Load(ctx, key)
 		if err != nil || !ok {
 			continue
 		}
@@ -304,10 +304,10 @@ func (s *Service) suggested(r Refinement) []SuggestedRepo {
 }
 
 // update loads a refinement, lets change edit it, and saves it.
-func (s *Service) update(key string, change func(*Refinement) error) (Refinement, error) {
+func (s *Service) update(ctx context.Context, key string, change func(*Refinement) error) (Refinement, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r, ok, err := s.Store.Load(key)
+	r, ok, err := s.Store.Load(ctx, key)
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -318,7 +318,7 @@ func (s *Service) update(key string, change func(*Refinement) error) (Refinement
 		return Refinement{}, err
 	}
 	r.Updated = time.Now()
-	return r, s.Store.Save(r)
+	return r, s.Store.Save(ctx, r)
 }
 
 // Search asks Claude which of the developer's open tickets this one builds
@@ -330,7 +330,7 @@ func (s *Service) Search(ctx context.Context, key, explanation string, progress 
 		return Refinement{}, err
 	}
 	s.mu.Lock()
-	r, ok, err := s.Store.Load(key)
+	r, ok, err := s.Store.Load(ctx, key)
 	s.mu.Unlock()
 	if err != nil {
 		return Refinement{}, err
@@ -396,18 +396,18 @@ func (s *Service) Search(ctx context.Context, key, explanation string, progress 
 	r.Summary, r.Related = t.Summary, related
 	r.CostUSD += run.CostUSD
 	r.Updated = time.Now()
-	return r, s.Store.Save(r)
+	return r, s.Store.Save(ctx, r)
 }
 
 // Decide accepts or rejects a blocker. A blocker Claude found while reading
 // the code is decided on the questions step; accepting it takes the ticket
 // back through the related step, since the questions so far did not build on
 // that ticket's work.
-func (s *Service) Decide(key, blocker, decision string) (Refinement, error) {
+func (s *Service) Decide(ctx context.Context, key, blocker, decision string) (Refinement, error) {
 	if decision != Accepted && decision != Rejected {
 		return Refinement{}, fmt.Errorf("decision %q is not %s or %s", decision, Accepted, Rejected)
 	}
-	return s.update(key, func(r *Refinement) error {
+	return s.update(ctx, key, func(r *Refinement) error {
 		i := slices.IndexFunc(r.Related.Blockers, func(b Blocker) bool { return b.Key == blocker })
 		if i < 0 {
 			return fmt.Errorf("%s is not a blocker of %s", blocker, key)
@@ -435,7 +435,7 @@ func (s *Service) Decide(key, blocker, decision string) (Refinement, error) {
 // accepted one is refined in Jira. Otherwise the ticket waits, and Waiting
 // names the blockers still unrefined.
 func (s *Service) Continue(ctx context.Context, key string) (Refinement, error) {
-	r, ok, err := s.Store.Load(key)
+	r, ok, err := s.Store.Load(ctx, key)
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -451,7 +451,7 @@ func (s *Service) Continue(ctx context.Context, key string) (Refinement, error) 
 // check reads each accepted blocker from Jira and moves on when all are
 // refined.
 func (s *Service) check(ctx context.Context, key string) (Refinement, error) {
-	r, _, err := s.Store.Load(key)
+	r, _, err := s.Store.Load(ctx, key)
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -465,7 +465,7 @@ func (s *Service) check(ctx context.Context, key string) (Refinement, error) {
 			waiting = append(waiting, b.Key)
 		}
 	}
-	return s.update(key, func(r *Refinement) error {
+	return s.update(ctx, key, func(r *Refinement) error {
 		r.Related.Waiting = waiting
 		for i, b := range r.Related.Blockers {
 			r.Related.Blockers[i].Refined = !slices.Contains(waiting, b.Key)
@@ -478,14 +478,14 @@ func (s *Service) check(ctx context.Context, key string) (Refinement, error) {
 }
 
 // SetRepos records the repos picked for the ticket.
-func (s *Service) SetRepos(key string, repos []string) (Refinement, error) {
+func (s *Service) SetRepos(ctx context.Context, key string, repos []string) (Refinement, error) {
 	configured := s.Repos()
 	for _, name := range repos {
 		if _, ok := configured[name]; !ok {
 			return Refinement{}, fmt.Errorf("no repo named %s in the config", name)
 		}
 	}
-	return s.update(key, func(r *Refinement) error {
+	return s.update(ctx, key, func(r *Refinement) error {
 		if r.Step != StepRepos {
 			return fmt.Errorf("repos: %w", ErrStep)
 		}
@@ -499,7 +499,7 @@ func (s *Service) SetRepos(key string, repos []string) (Refinement, error) {
 // point at, once per refinement. Claude reads only the repos' names.
 func (s *Service) Suggest(ctx context.Context, key string) (Refinement, error) {
 	s.mu.Lock()
-	r, ok, err := s.Store.Load(key)
+	r, ok, err := s.Store.Load(ctx, key)
 	s.mu.Unlock()
 	if err != nil {
 		return Refinement{}, err
@@ -540,7 +540,7 @@ func (s *Service) Suggest(ctx context.Context, key string) (Refinement, error) {
 			}
 		}
 	}
-	return s.update(key, func(r *Refinement) error {
+	return s.update(ctx, key, func(r *Refinement) error {
 		r.Suggestion = &suggestion
 		r.CostUSD += cost
 		return nil
@@ -551,8 +551,8 @@ func (s *Service) Suggest(ctx context.Context, key string) (Refinement, error) {
 // can pick again. What Claude read from the old repos is dropped: the rounds
 // and their session, the deployment and the result. Decided blockers stay
 // decided. Once stamping has begun the repos are fixed.
-func (s *Service) ChooseRepos(key string) (Refinement, error) {
-	return s.update(key, func(r *Refinement) error {
+func (s *Service) ChooseRepos(ctx context.Context, key string) (Refinement, error) {
+	return s.update(ctx, key, func(r *Refinement) error {
 		switch r.Step {
 		case StepQuestions, StepDeploy, StepResults:
 		default:
@@ -570,7 +570,7 @@ func (s *Service) ChooseRepos(key string) (Refinement, error) {
 // Sync fetches each picked repo from origin. When every fetch works, the
 // refinement moves on to questions; a repo that cannot be fetched blocks it.
 func (s *Service) Sync(ctx context.Context, key string) (Refinement, error) {
-	r, ok, err := s.Store.Load(key)
+	r, ok, err := s.Store.Load(ctx, key)
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -594,7 +594,7 @@ func (s *Service) Sync(ctx context.Context, key string) (Refinement, error) {
 		})
 	}
 	wg.Wait()
-	return s.update(key, func(r *Refinement) error {
+	return s.update(ctx, key, func(r *Refinement) error {
 		r.Synced = statuses
 		if !slices.ContainsFunc(statuses, func(st gitsync.Status) bool { return st.Error != "" }) {
 			r.Step = StepQuestions
@@ -644,7 +644,7 @@ func (s *Service) blockers(ctx context.Context, r Refinement) ([]jira.Ticket, er
 // fresh; later ones continue its session with the answers. A round with no
 // questions, or the end of the last round, moves on to deployment.
 func (s *Service) Ask(ctx context.Context, key string, progress func(claude.Activity)) (Refinement, error) {
-	r, ok, err := s.Store.Load(key)
+	r, ok, err := s.Store.Load(ctx, key)
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -658,7 +658,7 @@ func (s *Service) Ask(ctx context.Context, key string, progress func(claude.Acti
 		return Refinement{}, fmt.Errorf("accept or reject %s first", pending[0].Key)
 	}
 	if len(r.Rounds) >= MaxRounds {
-		return s.update(key, func(r *Refinement) error {
+		return s.update(ctx, key, func(r *Refinement) error {
 			r.Step = StepDeploy
 			return nil
 		})
@@ -704,7 +704,7 @@ func (s *Service) Ask(ctx context.Context, key string, progress func(claude.Acti
 		qs = append(qs, Question{Text: q.Question, Options: q.Options, Recommended: q.Recommended, Why: q.Why})
 	}
 	qs = normalize(qs, MaxQuestions)
-	return s.update(key, func(r *Refinement) error {
+	return s.update(ctx, key, func(r *Refinement) error {
 		r.CostUSD += run.CostUSD
 		if run.SessionID != "" {
 			r.QuestionSession = run.SessionID
@@ -724,8 +724,8 @@ func (s *Service) Ask(ctx context.Context, key string, progress func(claude.Acti
 
 // RestartQuestions drops every round and the session behind them, so the
 // next Ask reads the code fresh. Decided blockers stay decided.
-func (s *Service) RestartQuestions(key string) (Refinement, error) {
-	return s.update(key, func(r *Refinement) error {
+func (s *Service) RestartQuestions(ctx context.Context, key string) (Refinement, error) {
+	return s.update(ctx, key, func(r *Refinement) error {
 		if r.Step != StepQuestions {
 			return fmt.Errorf("questions: %w", ErrStep)
 		}
@@ -762,7 +762,7 @@ type Answers struct {
 
 // Answer saves answers as the developer gives them: to the current round's
 // questions, or to the deployment questions.
-func (s *Service) Answer(key string, a Answers) (Refinement, error) {
+func (s *Service) Answer(ctx context.Context, key string, a Answers) (Refinement, error) {
 	fill := func(qs []Question, answers []string) {
 		for i := range qs {
 			if i < len(answers) {
@@ -770,7 +770,7 @@ func (s *Service) Answer(key string, a Answers) (Refinement, error) {
 			}
 		}
 	}
-	return s.update(key, func(r *Refinement) error {
+	return s.update(ctx, key, func(r *Refinement) error {
 		switch r.Step {
 		case StepQuestions:
 			if len(r.Rounds) == 0 {
@@ -797,7 +797,7 @@ func (s *Service) Answer(key string, a Answers) (Refinement, error) {
 // AskDeploy asks the deployment questions in a fresh session: how each repo
 // without a saved profile deploys, then what this ticket needs at deploy.
 func (s *Service) AskDeploy(ctx context.Context, key string, progress func(claude.Activity)) (Refinement, error) {
-	r, ok, err := s.Store.Load(key)
+	r, ok, err := s.Store.Load(ctx, key)
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -812,7 +812,7 @@ func (s *Service) AskDeploy(ctx context.Context, key string, progress func(claud
 	if err != nil {
 		return Refinement{}, err
 	}
-	profiles, err := s.Store.Profiles()
+	profiles, err := s.Store.Profiles(ctx)
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -862,7 +862,7 @@ func (s *Service) AskDeploy(ctx context.Context, key string, progress func(claud
 	if qs := normalize(ticket, MaxDeployQuestions); qs != nil {
 		deploy.Ticket = qs
 	}
-	return s.update(key, func(r *Refinement) error {
+	return s.update(ctx, key, func(r *Refinement) error {
 		r.CostUSD += run.CostUSD
 		r.Deploy = &deploy
 		return nil
@@ -872,7 +872,7 @@ func (s *Service) AskDeploy(ctx context.Context, key string, progress func(claud
 // Generate saves the repos' deployment profiles from the answers, then
 // writes up the ticket in a fresh session.
 func (s *Service) Generate(ctx context.Context, key string, progress func(claude.Activity)) (Refinement, error) {
-	r, ok, err := s.Store.Load(key)
+	r, ok, err := s.Store.Load(ctx, key)
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -887,7 +887,7 @@ func (s *Service) Generate(ctx context.Context, key string, progress func(claude
 		byRepo[q.Repo] = append(byRepo[q.Repo], QA{Question: q.Text, Answer: q.Answer})
 	}
 	for _, name := range slices.Sorted(maps.Keys(byRepo)) {
-		if err := s.Store.SaveProfile(Profile{Repo: name, Answers: byRepo[name], Updated: time.Now()}); err != nil {
+		if err := s.Store.SaveProfile(ctx, Profile{Repo: name, Answers: byRepo[name], Updated: time.Now()}); err != nil {
 			return Refinement{}, err
 		}
 	}
@@ -899,7 +899,7 @@ func (s *Service) Generate(ctx context.Context, key string, progress func(claude
 	if err != nil {
 		return Refinement{}, err
 	}
-	profiles, err := s.Store.Profiles()
+	profiles, err := s.Store.Profiles(ctx)
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -926,7 +926,7 @@ func (s *Service) Generate(ctx context.Context, key string, progress func(claude
 		return Refinement{}, err
 	}
 	result = tidy(result).Scored()
-	return s.update(key, func(r *Refinement) error {
+	return s.update(ctx, key, func(r *Refinement) error {
 		r.CostUSD += run.CostUSD
 		r.Result = &result
 		r.Step = StepResults
@@ -985,7 +985,7 @@ func (s *Service) SetFormat(f Format, text string) error {
 // Implementation again, under the current write-up rules, for the original
 // and every split ticket. The ratings, the split and the deploy needs stay.
 func (s *Service) Rewrite(ctx context.Context, key string, progress func(claude.Activity)) (Refinement, error) {
-	r, ok, err := s.Store.Load(key)
+	r, ok, err := s.Store.Load(ctx, key)
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -1034,7 +1034,7 @@ func (s *Service) Rewrite(ctx context.Context, key string, progress func(claude.
 	if len(rewritten.Split) != len(r.Result.Split) {
 		return Refinement{}, fmt.Errorf("Claude rewrote %d split tickets, not %d; try again", len(rewritten.Split), len(r.Result.Split))
 	}
-	return s.update(key, func(r *Refinement) error {
+	return s.update(ctx, key, func(r *Refinement) error {
 		if r.Step != StepResults || r.Result == nil || len(r.Stamp.Done) > 0 || len(r.Result.Split) != len(rewritten.Split) {
 			return fmt.Errorf("rewrite: %w", ErrStep)
 		}
@@ -1092,8 +1092,8 @@ func tidy(r Result) Result {
 
 // Edit saves the developer's edits to the result: the original's fields and
 // the split tickets' titles. The points follow the ratings.
-func (s *Service) Edit(key string, edited Result) (Refinement, error) {
-	return s.update(key, func(r *Refinement) error {
+func (s *Service) Edit(ctx context.Context, key string, edited Result) (Refinement, error) {
+	return s.update(ctx, key, func(r *Refinement) error {
 		if r.Step != StepResults || r.Result == nil || len(r.Stamp.Done) > 0 {
 			return fmt.Errorf("edit: %w", ErrStep)
 		}
@@ -1115,10 +1115,10 @@ func (s *Service) Edit(key string, edited Result) (Refinement, error) {
 }
 
 // Reset forgets a ticket's refinement, so it starts over.
-func (s *Service) Reset(key string) error {
+func (s *Service) Reset(ctx context.Context, key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.Store.Delete(key)
+	return s.Store.Delete(ctx, key)
 }
 
 func plural(n int) string {
@@ -1130,20 +1130,20 @@ func plural(n int) string {
 
 // Describe is a ticket's refinement for the app, without reading the ticket
 // from Jira again.
-func (s *Service) Describe(key string) (View, error) {
-	r, started, err := s.Store.Load(key)
+func (s *Service) Describe(ctx context.Context, key string) (View, error) {
+	r, started, err := s.Store.Load(ctx, key)
 	if err != nil {
 		return View{}, err
 	}
 	if !started {
 		return View{}, fmt.Errorf("%s has no refinement", key)
 	}
-	return s.view(jira.Ticket{}, r, started)
+	return s.view(ctx, jira.Ticket{}, r, started)
 }
 
 // Profiles lists every saved deployment profile, by repo.
-func (s *Service) Profiles() ([]Profile, error) {
-	all, err := s.Store.Profiles()
+func (s *Service) Profiles(ctx context.Context) ([]Profile, error) {
+	all, err := s.Store.Profiles(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1156,7 +1156,7 @@ func (s *Service) Profiles() ([]Profile, error) {
 
 // SetProfile replaces a repo's deployment profile; one with no answers is
 // forgotten, so the repo is asked about again.
-func (s *Service) SetProfile(p Profile) error {
+func (s *Service) SetProfile(ctx context.Context, p Profile) error {
 	var answers []QA
 	for _, qa := range p.Answers {
 		qa.Question, qa.Answer = strings.TrimSpace(qa.Question), strings.TrimSpace(qa.Answer)
@@ -1165,5 +1165,5 @@ func (s *Service) SetProfile(p Profile) error {
 		}
 	}
 	p.Answers, p.Updated = answers, time.Now()
-	return s.Store.SaveProfile(p)
+	return s.Store.SaveProfile(ctx, p)
 }
