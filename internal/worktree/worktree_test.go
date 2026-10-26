@@ -48,7 +48,7 @@ func TestCheckoutReadsBranchWithoutTouchingCheckout(t *testing.T) {
 	os.WriteFile(filepath.Join(repo, "app.txt"), []byte("uncommitted"), 0o600)
 
 	dest := filepath.Join(t.TempDir(), "worktrees", "app")
-	if _, err := Checkout(ctx, repo, "develop", dest, true); err != nil {
+	if _, err := Checkout(ctx, repo, "develop", dest); err != nil {
 		t.Fatal(err)
 	}
 	if got := read(t, filepath.Join(dest, "app.txt")); got != "develop v1" {
@@ -67,7 +67,7 @@ func TestCheckoutReadsBranchWithoutTouchingCheckout(t *testing.T) {
 	run(t, repo, "checkout", "--quiet", "feature/x")
 
 	os.WriteFile(filepath.Join(dest, "app.txt"), []byte("scribbled"), 0o600)
-	if _, err := Checkout(ctx, repo, "develop", dest, false); err != nil {
+	if _, err := Checkout(ctx, repo, "develop", dest); err != nil {
 		t.Fatal(err)
 	}
 	if got := read(t, filepath.Join(dest, "app.txt")); got != "develop v2" {
@@ -82,11 +82,11 @@ func TestCheckoutRecreatesDeletedWorktree(t *testing.T) {
 	commit(t, repo, "app.txt", "v1")
 
 	dest := filepath.Join(t.TempDir(), "app")
-	if _, err := Checkout(ctx, repo, "develop", dest, false); err != nil {
+	if _, err := Checkout(ctx, repo, "develop", dest); err != nil {
 		t.Fatal(err)
 	}
 	os.RemoveAll(dest)
-	if _, err := Checkout(ctx, repo, "develop", dest, false); err != nil {
+	if _, err := Checkout(ctx, repo, "develop", dest); err != nil {
 		t.Fatal(err)
 	}
 	if got := read(t, filepath.Join(dest, "app.txt")); got != "v1" {
@@ -98,7 +98,7 @@ func TestCheckoutMissingBranch(t *testing.T) {
 	repo := t.TempDir()
 	run(t, repo, "init", "--quiet", "-b", "main")
 	commit(t, repo, "app.txt", "v1")
-	_, err := Checkout(context.Background(), repo, "develop", filepath.Join(t.TempDir(), "app"), false)
+	_, err := Checkout(context.Background(), repo, "develop", filepath.Join(t.TempDir(), "app"))
 	if err == nil || !strings.Contains(err.Error(), "has no develop branch") {
 		t.Errorf("err = %v", err)
 	}

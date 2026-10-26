@@ -12,14 +12,9 @@ import (
 )
 
 // Checkout puts ref, a branch or a commit, into a detached worktree of repo
-// at dest and returns its commit. With fetch it refreshes origin first and
-// prefers origin/<ref> over the local branch.
-func Checkout(ctx context.Context, repo, ref, dest string, fetch bool) (string, error) {
-	if fetch {
-		// A failed fetch (offline, no origin) falls back to what is already there.
-		_, _ = gitcmd.Run(ctx, repo, "fetch", "--quiet", "origin", ref)
-	}
-
+// at dest and returns its commit. It prefers origin/<ref> over the local
+// branch.
+func Checkout(ctx context.Context, repo, ref, dest string) (string, error) {
 	commit, err := resolve(ctx, repo, ref)
 	if err != nil {
 		return "", err
