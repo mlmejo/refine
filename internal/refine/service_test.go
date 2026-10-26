@@ -633,9 +633,6 @@ func TestFieldsFollowJiraLayout(t *testing.T) {
 		!strings.HasSuffix(f.StoryPointCriteria, "Deployment Complexity: Low\nTotal: Medium (1.6)") {
 		t.Fatalf("fields = %+v", f)
 	}
-	if got := DeployComment([]string{"Set `KEY` on prod"}); !strings.Contains(got, "* Set {{KEY}} on prod") {
-		t.Fatalf("comment = %q", got)
-	}
 }
 
 func TestBlockerFoundInTheCodeWaitsForTheDeveloper(t *testing.T) {

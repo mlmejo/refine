@@ -133,9 +133,9 @@ func (s *Service) List(ctx context.Context) (Page, error) {
 	for _, t := range tickets {
 		for _, l := range t.Links {
 			switch {
-			case l.Type == "Blocks" && l.Relation == "is blocked by":
+			case l.BlockedBy():
 				add(t.Key, l.Key)
-			case l.Type == "Blocks" && l.Relation == "blocks":
+			case l.Blocks():
 				add(l.Key, t.Key)
 			}
 		}

@@ -3,7 +3,6 @@ package refine
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -91,7 +90,7 @@ func (s *Service) act(ctx context.Context, r Refinement, id string, target **jir
 	case id == "write":
 		return "", s.Jira.Update(ctx, r.Key, fields(res.AcceptanceCriteria, res.TechnicalImplementation, res.Decisions, res.Ratings, res.Points))
 	case id == "comment":
-		body := DeployComment(res.DeployNeeds)
+		body := jira.DeployComment(res.DeployNeeds)
 		t, err := s.Jira.GetTicket(ctx, r.Key)
 		if err != nil || t.HasComment(body) {
 			return "", err
@@ -120,63 +119,21 @@ func (s *Service) act(ctx context.Context, r Refinement, id string, target **jir
 	return "", fmt.Errorf("unknown stamp action %q", id)
 }
 
-// fields is a ticket's refinement as Jira's fields take it. The fields
-// render plain text, so nothing here is markdown.
+// fields is a ticket's refinement as Jira's fields take it.
 func fields(criteria []string, repos []RepoFiles, decisions []string, ratings Ratings, points int) jira.Refinement {
-	var ac strings.Builder
-	for _, item := range criteria {
-		ac.WriteString("* " + item + "\n")
-	}
-	var ti strings.Builder
+	files := make([]jira.RepoFiles, len(repos))
 	for i, repo := range repos {
-		if i > 0 {
-			ti.WriteString("\n")
-		}
-		ti.WriteString(repo.Repo + "\n\n")
-		for _, file := range repo.Files {
-			line := "* " + file.Path
-			if file.New {
-				line += " (new)"
-			}
-			ti.WriteString(line + "\n")
+		files[i].Repo = repo.Repo
+		for _, f := range repo.Files {
+			files[i].Files = append(files[i].Files, jira.File{Path: f.Path, New: f.New})
 		}
 	}
-	if len(decisions) > 0 {
-		ti.WriteString("\n---\n\n")
-		for _, d := range decisions {
-			ti.WriteString("* " + d + "\n")
-		}
-	}
-	var spc []string
-	if total := ratings.Total(); total != "" {
-		for _, row := range ratings.Rows() {
-			spc = append(spc, row[0]+": "+row[1])
-		}
-		spc = append(spc, "Total: "+total)
-	}
-	return jira.Refinement{
-		AcceptanceCriteria:      strings.TrimSpace(ac.String()),
-		TechnicalImplementation: strings.TrimSpace(ti.String()),
-		StoryPointCriteria:      strings.Join(spc, "\n"),
-		Points:                  points,
-	}
-}
-
-// DeployComment is the deploy needs as one Jira comment in wiki markup.
-func DeployComment(needs []string) string {
-	var out strings.Builder
-	out.WriteString("Deploy needs found while refining this ticket.\n\n")
-	for _, need := range needs {
-		out.WriteString("* " + wiki(need) + "\n")
-	}
-	return out.String()
-}
-
-var backticked = regexp.MustCompile("`([^`]+)`")
-
-// wiki puts one line of text in Jira wiki markup: `code` becomes {{code}},
-// and line breaks become spaces so a list item stays one item.
-func wiki(text string) string {
-	text = strings.Join(strings.Fields(text), " ")
-	return backticked.ReplaceAllString(text, "{{$1}}")
+	return jira.Fields(jira.Draft{
+		AcceptanceCriteria: criteria,
+		Repos:              files,
+		Decisions:          decisions,
+		Ratings:            ratings.Rows(),
+		Total:              ratings.Total(),
+		Points:             points,
+	})
 }
