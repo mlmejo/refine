@@ -248,13 +248,21 @@ func (s *Service) view(t jira.Ticket, r Refinement, started bool) (View, error) 
 	if err != nil {
 		return View{}, err
 	}
+	// The app gets [] for an empty list, never null: one rule, kept here
+	// rather than in each producer.
+	r.Repos = orEmpty(r.Repos)
+	r.Synced = orEmpty(r.Synced)
+	r.Rounds = orEmpty(r.Rounds)
+	r.Related.Blockers = orEmpty(r.Related.Blockers)
+	r.Related.Overlaps = orEmpty(r.Related.Overlaps)
 	v := View{
 		Refinement: r,
 		Ticket: TicketInfo{Key: t.Key, Summary: t.Summary, Status: t.Status,
-			DescriptionMD: t.DescriptionMarkdown, Links: t.Links},
+			DescriptionMD: t.DescriptionMarkdown, Links: orEmpty(t.Links)},
 		Started:   started,
-		Suggested: s.suggested(r),
-		Plan:      Plan(r),
+		Suggested: orEmpty(s.suggested(r)),
+		Plan:      orEmpty(Plan(r)),
+		Profiles:  []Profile{},
 	}
 	for _, name := range r.Repos {
 		if p, ok := profiles[name]; ok {
@@ -262,6 +270,14 @@ func (s *Service) view(t jira.Ticket, r Refinement, started bool) (View, error) 
 		}
 	}
 	return v, nil
+}
+
+// orEmpty is s, or an empty slice for nil, which JSON writes as [] not null.
+func orEmpty[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
 }
 
 // suggested are the repos picked for the tickets this one relates to, then

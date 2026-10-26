@@ -757,3 +757,18 @@ func TestSuggestOnlyAtTheReposStep(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestViewSendsEmptyListsNotNull(t *testing.T) {
+	s, _, _, _, _ := setup()
+	v, err := s.Open(context.Background(), "GEEK-101")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "null") {
+		t.Errorf("view has null: %s", data)
+	}
+}
