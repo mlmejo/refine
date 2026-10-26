@@ -570,6 +570,11 @@ func TestStampWritesInOrderAndRetriesFromTheFailure(t *testing.T) {
 	}
 }
 
+// hiddenKeys hides the keys set to true.
+type hiddenKeys map[string]bool
+
+func (h hiddenKeys) Has(key string) bool { return h[key] }
+
 func TestListPinsStartedTicketsAndShowsBlocking(t *testing.T) {
 	s, j, c, _, _ := setup()
 	toRepos(t, s, c)
@@ -577,7 +582,7 @@ func TestListPinsStartedTicketsAndShowsBlocking(t *testing.T) {
 		{Type: "Blocks", Relation: "is blocked by", Key: "GEEK-101"},
 	}}
 	j.list = []string{"GEEK-140", "GEEK-100", "GEEK-112", "GEEK-101"}
-	s.Hidden = func(key string) bool { return key == "GEEK-112" }
+	s.Hidden = hiddenKeys{"GEEK-112": true}
 	page, err := s.List(context.Background())
 	if err != nil {
 		t.Fatal(err)

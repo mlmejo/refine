@@ -53,6 +53,11 @@ type Git interface {
 	Checkout(ctx context.Context, repo, commit, dest string) error
 }
 
+// Hidden reports tickets the developer hid from the list.
+type Hidden interface {
+	Has(key string) bool
+}
+
 // Service runs refinements.
 type Service struct {
 	Jira   Jira
@@ -69,7 +74,7 @@ type Service struct {
 	// Worktrees is where each repo's commit is checked out for Claude.
 	Worktrees string
 	// Hidden reports tickets the developer hid from the list.
-	Hidden func(key string) bool
+	Hidden Hidden
 	// FormatDir holds the markdown files of rules for Acceptance Criteria
 	// (ac.md) and Technical Implementation (ti.md). Empty, or a missing file,
 	// means the defaults.
@@ -154,7 +159,7 @@ func (s *Service) List(ctx context.Context) (Page, error) {
 
 	var started, rest []Row
 	for _, t := range tickets {
-		if t.Refined() || (s.Hidden != nil && s.Hidden(t.Key)) {
+		if t.Refined() || (s.Hidden != nil && s.Hidden.Has(t.Key)) {
 			continue
 		}
 		row := Row{Key: t.Key, Summary: t.Summary, Status: t.Status, Step: "Not started",

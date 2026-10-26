@@ -59,7 +59,7 @@ func serve(a *app.App) error {
 	if err != nil {
 		return err
 	}
-	hello, err := json.Marshal(map[string]any{"port": ln.Addr().(*net.TCPAddr).Port, "token": a.Server.Token})
+	hello, err := json.Marshal(map[string]any{"port": ln.Addr().(*net.TCPAddr).Port, "token": a.Server.Token()})
 	if err != nil {
 		return err
 	}

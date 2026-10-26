@@ -63,8 +63,7 @@ func Open() (*App, error) {
 	if err := os.MkdirAll(state, 0o700); err != nil {
 		return nil, err
 	}
-	hiddenStore := hidden.Store{Path: filepath.Join(state, "hidden.json")}
-	hiddenKeys, err := hiddenStore.Load()
+	hiddenSet, err := hidden.Open(filepath.Join(state, "hidden.json"))
 	if err != nil {
 		return nil, err
 	}
@@ -113,6 +112,7 @@ func Open() (*App, error) {
 		Repos:       repos.List,
 		Worktrees:   filepath.Join(state, "worktrees"),
 		FormatDir:   filepath.Dir(path),
+		Hidden:      hiddenSet,
 	}
 	for _, f := range []refine.Format{refine.FormatAC, refine.FormatTI} {
 		if _, err := os.Stat(service.FormatPath(f)); errors.Is(err, fs.ErrNotExist) {
@@ -122,6 +122,6 @@ func Open() (*App, error) {
 		}
 	}
 	info := server.Info{Site: cfg.Jira.Site, Project: cfg.Jira.Project, Sprint: cfg.Jira.Sprint, ReadySprint: cfg.Jira.ReadySprint}
-	srv := server.New(info, service, repos, hiddenKeys, hiddenStore.Save)
+	srv := server.New(info, service, repos, hiddenSet)
 	return &App{Server: srv, Store: db}, nil
 }

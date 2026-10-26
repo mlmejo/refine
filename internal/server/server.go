@@ -42,37 +42,34 @@ type Info struct {
 	ReadySprint string `json:"ready_sprint"`
 }
 
+// Hider hides and unhides tickets in the list.
+type Hider interface {
+	Set(key string, hide bool) error
+}
+
 // Server answers the desktop app. Every request needs the token.
 type Server struct {
-	Info    Info
-	Service *refine.Service
-	Repos   Repos
-	// SaveHidden keeps the hidden ticket keys.
-	SaveHidden func(keys []string) error
-	Token      string
+	about   Info
+	service *refine.Service
+	config  Repos
+	hidden  Hider
+	token   string
 
 	mu     sync.Mutex
-	hidden map[string]bool
 	job    *job
 	nextID int
 }
 
-// New returns a server with a fresh random token. hidden are the keys
-// already hidden from the list.
-func New(info Info, service *refine.Service, repos Repos, hidden []string, saveHidden func([]string) error) *Server {
+// New returns a server with a fresh random token. hidden is the set the
+// service reads when it lists tickets.
+func New(info Info, service *refine.Service, repos Repos, hidden Hider) *Server {
 	token := make([]byte, 24)
 	_, _ = rand.Read(token)
-	s := &Server{Info: info, Service: service, Repos: repos, SaveHidden: saveHidden, Token: hex.EncodeToString(token), hidden: map[string]bool{}}
-	for _, key := range hidden {
-		s.hidden[key] = true
-	}
-	service.Hidden = func(key string) bool {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		return s.hidden[key]
-	}
-	return s
+	return &Server{about: info, service: service, config: repos, hidden: hidden, token: hex.EncodeToString(token)}
 }
+
+// Token is what every request sends as "Authorization: Bearer <token>".
+func (s *Server) Token() string { return s.token }
 
 // Handler routes the API.
 func (s *Server) Handler() http.Handler {
@@ -110,7 +107,7 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) auth(next http.Handler) http.Handler {
-	want := []byte("Bearer " + s.Token)
+	want := []byte("Bearer " + s.token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {
 			fail(w, http.StatusUnauthorized, errors.New("bad token"))
@@ -150,10 +147,10 @@ func decode(w http.ResponseWriter, r *http.Request, into any) bool {
 
 func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 	reply(w, map[string]any{
-		"site":          s.Info.Site,
-		"project":       s.Info.Project,
-		"sprint":        s.Info.Sprint,
-		"ready_sprint":  s.Info.ReadySprint,
+		"site":          s.about.Site,
+		"project":       s.about.Project,
+		"sprint":        s.about.Sprint,
+		"ready_sprint":  s.about.ReadySprint,
 		"max_rounds":    refine.MaxRounds,
 		"max_questions": refine.MaxQuestions,
 		"build":         version.Build(),
@@ -162,7 +159,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) tickets(w http.ResponseWriter, r *http.Request) {
-	page, err := s.Service.List(r.Context())
+	page, err := s.service.List(r.Context())
 	if err != nil {
 		fail(w, http.StatusBadGateway, err)
 		return
@@ -172,12 +169,12 @@ func (s *Server) tickets(w http.ResponseWriter, r *http.Request) {
 
 // lookup reads a ticket key, or a number in the project, and unhides it.
 func (s *Server) lookup(w http.ResponseWriter, r *http.Request) {
-	key, ok := jira.ParseKey(r.URL.Query().Get("q"), s.Info.Project)
+	key, ok := jira.ParseKey(r.URL.Query().Get("q"), s.about.Project)
 	if !ok {
 		fail(w, http.StatusBadRequest, errors.New("not a ticket key"))
 		return
 	}
-	if err := s.setHidden(key, false); err != nil {
+	if err := s.hidden.Set(key, false); err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -186,7 +183,7 @@ func (s *Server) lookup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) hide(hide bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := s.setHidden(r.PathValue("key"), hide); err != nil {
+		if err := s.hidden.Set(r.PathValue("key"), hide); err != nil {
 			fail(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -194,26 +191,9 @@ func (s *Server) hide(hide bool) http.HandlerFunc {
 	}
 }
 
-func (s *Server) setHidden(key string, hide bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.hidden[key] == hide {
-		return nil
-	}
-	if hide {
-		s.hidden[key] = true
-	} else {
-		delete(s.hidden, key)
-	}
-	if s.SaveHidden == nil {
-		return nil
-	}
-	return s.SaveHidden(slices.Sorted(maps.Keys(s.hidden)))
-}
-
 // open reads a ticket and its refinement, or the start of one.
 func (s *Server) open(w http.ResponseWriter, r *http.Request) {
-	view, err := s.Service.Open(r.Context(), r.PathValue("key"))
+	view, err := s.service.Open(r.Context(), r.PathValue("key"))
 	if err != nil {
 		fail(w, http.StatusBadGateway, err)
 		return
@@ -227,7 +207,7 @@ func (s *Server) describe(w http.ResponseWriter, key string, err error) {
 		failFor(w, err)
 		return
 	}
-	view, err := s.Service.Describe(key)
+	view, err := s.service.Describe(key)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
@@ -240,7 +220,7 @@ func (s *Server) reset(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, errors.New("cancel the running step first"))
 		return
 	}
-	if err := s.Service.Reset(r.PathValue("key")); err != nil {
+	if err := s.service.Reset(r.PathValue("key")); err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -256,25 +236,25 @@ func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	_, err := s.Service.Decide(key, body.Blocker, body.Decision)
+	_, err := s.service.Decide(key, body.Blocker, body.Decision)
 	s.describe(w, key, err)
 }
 
 func (s *Server) continue_(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	_, err := s.Service.Continue(r.Context(), key)
+	_, err := s.service.Continue(r.Context(), key)
 	s.describe(w, key, err)
 }
 
 func (s *Server) restartQuestions(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	_, err := s.Service.RestartQuestions(key)
+	_, err := s.service.RestartQuestions(key)
 	s.describe(w, key, err)
 }
 
 func (s *Server) chooseRepos(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	_, err := s.Service.ChooseRepos(key)
+	_, err := s.service.ChooseRepos(key)
 	s.describe(w, key, err)
 }
 
@@ -286,19 +266,19 @@ func (s *Server) setRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	_, err := s.Service.SetRepos(key, body.Repos)
+	_, err := s.service.SetRepos(key, body.Repos)
 	s.describe(w, key, err)
 }
 
 func (s *Server) suggest(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	_, err := s.Service.Suggest(r.Context(), key)
+	_, err := s.service.Suggest(r.Context(), key)
 	s.describe(w, key, err)
 }
 
 func (s *Server) sync(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	_, err := s.Service.Sync(r.Context(), key)
+	_, err := s.service.Sync(r.Context(), key)
 	s.describe(w, key, err)
 }
 
@@ -308,7 +288,7 @@ func (s *Server) answers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	_, err := s.Service.Answer(key, body)
+	_, err := s.service.Answer(key, body)
 	s.describe(w, key, err)
 }
 
@@ -318,7 +298,7 @@ func (s *Server) edit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	_, err := s.Service.Edit(key, body)
+	_, err := s.service.Edit(key, body)
 	s.describe(w, key, err)
 }
 
@@ -330,7 +310,7 @@ func (s *Server) stamp(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, errors.New("a step is running on this ticket"))
 		return
 	}
-	_, err := s.Service.Stamp(r.Context(), key)
+	_, err := s.service.Stamp(r.Context(), key)
 	s.describe(w, key, err)
 }
 
@@ -340,8 +320,8 @@ type repo struct {
 }
 
 func (s *Server) repos(w http.ResponseWriter, r *http.Request) {
-	all := s.Repos.List()
-	profiles, err := s.Service.Profiles()
+	all := s.config.List()
+	profiles, err := s.service.Profiles()
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
@@ -379,7 +359,7 @@ func (s *Server) addRepo(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, fmt.Errorf("%s is not a git repo", body.Dir))
 		return
 	}
-	if err := s.Repos.Add(body.Name, filepath.Clean(body.Dir)); err != nil {
+	if err := s.config.Add(body.Name, filepath.Clean(body.Dir)); err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
@@ -387,7 +367,7 @@ func (s *Server) addRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) removeRepo(w http.ResponseWriter, r *http.Request) {
-	if err := s.Repos.Remove(r.PathValue("name")); err != nil {
+	if err := s.config.Remove(r.PathValue("name")); err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
@@ -397,7 +377,7 @@ func (s *Server) removeRepo(w http.ResponseWriter, r *http.Request) {
 // scan lists the git checkouts at or under a folder, with the names they
 // would be added as.
 func (s *Server) scan(w http.ResponseWriter, r *http.Request) {
-	found, err := reposcan.Scan(r.URL.Query().Get("dir"), s.Repos.List())
+	found, err := reposcan.Scan(r.URL.Query().Get("dir"), s.config.List())
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
@@ -410,7 +390,7 @@ func (s *Server) scan(w http.ResponseWriter, r *http.Request) {
 func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
 	count := map[string]int{}
 	best := ""
-	all := s.Repos.List()
+	all := s.config.List()
 	for _, name := range slices.Sorted(maps.Keys(all)) {
 		parent := filepath.Dir(all[name])
 		count[parent]++
@@ -432,11 +412,11 @@ func (s *Server) setProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("repo")
-	if _, ok := s.Repos.List()[name]; !ok {
+	if _, ok := s.config.List()[name]; !ok {
 		fail(w, http.StatusNotFound, fmt.Errorf("no repo named %s", name))
 		return
 	}
-	if err := s.Service.SetProfile(refine.Profile{Repo: name, Answers: body.Answers}); err != nil {
+	if err := s.service.SetProfile(refine.Profile{Repo: name, Answers: body.Answers}); err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -452,12 +432,12 @@ func (s *Server) format(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, fmt.Errorf("no format %q", f))
 		return
 	}
-	text, err := s.Service.Format(f)
+	text, err := s.service.Format(f)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
-	reply(w, map[string]any{"path": s.Service.FormatPath(f), "custom": strings.TrimSpace(text) != strings.TrimSpace(def)})
+	reply(w, map[string]any{"path": s.service.FormatPath(f), "custom": strings.TrimSpace(text) != strings.TrimSpace(def)})
 }
 
 // setFormat takes a field's uploaded rules, or puts the defaults back.
@@ -479,7 +459,7 @@ func (s *Server) setFormat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.Service.SetFormat(f, body.Text); err != nil {
+	if err := s.service.SetFormat(f, body.Text); err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -563,27 +543,27 @@ func (s *Server) startJob(w http.ResponseWriter, r *http.Request) {
 	switch body.Kind {
 	case kindSearch:
 		work = func(ctx context.Context, p func(claude.Activity)) error {
-			_, err := s.Service.Search(ctx, body.Key, body.Explanation, p)
+			_, err := s.service.Search(ctx, body.Key, body.Explanation, p)
 			return err
 		}
 	case kindAsk:
 		work = func(ctx context.Context, p func(claude.Activity)) error {
-			_, err := s.Service.Ask(ctx, body.Key, p)
+			_, err := s.service.Ask(ctx, body.Key, p)
 			return err
 		}
 	case kindDeploy:
 		work = func(ctx context.Context, p func(claude.Activity)) error {
-			_, err := s.Service.AskDeploy(ctx, body.Key, p)
+			_, err := s.service.AskDeploy(ctx, body.Key, p)
 			return err
 		}
 	case kindGenerate:
 		work = func(ctx context.Context, p func(claude.Activity)) error {
-			_, err := s.Service.Generate(ctx, body.Key, p)
+			_, err := s.service.Generate(ctx, body.Key, p)
 			return err
 		}
 	case kindRewrite:
 		work = func(ctx context.Context, p func(claude.Activity)) error {
-			_, err := s.Service.Rewrite(ctx, body.Key, p)
+			_, err := s.service.Rewrite(ctx, body.Key, p)
 			return err
 		}
 	default:

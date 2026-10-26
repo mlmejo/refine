@@ -14,6 +14,7 @@ import (
 
 	"github.com/mlmejo/refine/internal/claude"
 	"github.com/mlmejo/refine/internal/gitsync"
+	"github.com/mlmejo/refine/internal/hidden"
 	"github.com/mlmejo/refine/internal/jira"
 	"github.com/mlmejo/refine/internal/refine"
 	"github.com/mlmejo/refine/internal/store"
@@ -79,9 +80,14 @@ func setup(t *testing.T) (*Server, chan struct{}) {
 		"GEEK-100": {Issue: jira.Issue{Key: "GEEK-100", Summary: "Stripe", AcceptanceCriteria: "* a", TechnicalImplementation: "x"}},
 		"GEEK-101": {Issue: jira.Issue{Key: "GEEK-101", Summary: "Refunds"}, DescriptionMarkdown: "Use **Stripe**."},
 	}}
+	hiddenSet, err := hidden.Open(filepath.Join(t.TempDir(), "hidden.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	svc := &refine.Service{Jira: j, Claude: slowClaude{release: release}, Store: st, Git: noGit{},
-		Sprint: "S", ReadySprint: "R", Repos: func() map[string]string { return map[string]string{"admin": "/r/admin"} }}
-	srv := New(Info{Project: "GEEK"}, svc, Repos{List: func() map[string]string { return map[string]string{"admin": "/r/admin"} }}, nil, nil)
+		Sprint: "S", ReadySprint: "R", Repos: func() map[string]string { return map[string]string{"admin": "/r/admin"} },
+		Hidden: hiddenSet}
+	srv := New(Info{Project: "GEEK"}, svc, Repos{List: func() map[string]string { return map[string]string{"admin": "/r/admin"} }}, hiddenSet)
 	t.Cleanup(srv.Close)
 	return srv, release
 }
@@ -89,7 +95,7 @@ func setup(t *testing.T) (*Server, chan struct{}) {
 func call(t *testing.T, srv *Server, method, path, body string, out any) int {
 	t.Helper()
 	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
-	req.Header.Set("Authorization", "Bearer "+srv.Token)
+	req.Header.Set("Authorization", "Bearer "+srv.Token())
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if out != nil && rec.Code < 300 {
@@ -107,6 +113,44 @@ func TestNeedsTheToken(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("code = %d", rec.Code)
 	}
+}
+
+func TestNewLeavesTheServiceAlone(t *testing.T) {
+	svc := &refine.Service{}
+	srv := New(Info{}, svc, Repos{}, hiddenKeys{})
+	t.Cleanup(srv.Close)
+	if svc.Hidden != nil {
+		t.Fatal("New set the service's Hidden")
+	}
+	if len(srv.Token()) != 48 {
+		t.Fatalf("token = %q", srv.Token())
+	}
+}
+
+func TestHideWritesTheSetItWasGiven(t *testing.T) {
+	keys := hiddenKeys{}
+	srv := New(Info{Project: "GEEK"}, &refine.Service{}, Repos{}, keys)
+	t.Cleanup(srv.Close)
+	call(t, srv, "PUT", "/api/hidden/GEEK-7", "", nil)
+	if !keys["GEEK-7"] {
+		t.Fatalf("keys = %v", keys)
+	}
+	call(t, srv, "GET", "/api/lookup?q=7", "", nil)
+	if keys["GEEK-7"] {
+		t.Fatalf("lookup left GEEK-7 hidden: %v", keys)
+	}
+}
+
+// hiddenKeys hides the keys set to true.
+type hiddenKeys map[string]bool
+
+func (h hiddenKeys) Set(key string, hide bool) error {
+	if hide {
+		h[key] = true
+	} else {
+		delete(h, key)
+	}
+	return nil
 }
 
 func TestListLeavesOutRefinedAndHiddenTickets(t *testing.T) {
