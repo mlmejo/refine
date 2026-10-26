@@ -49,7 +49,7 @@ type Store interface {
 
 // Git fetches a repo and checks a commit out for Claude to read.
 type Git interface {
-	Fetch(ctx context.Context, name, dir string) gitsync.Status
+	Fetch(ctx context.Context, name, dir string) (gitsync.Status, error)
 	Checkout(ctx context.Context, repo, commit, dest string) error
 }
 
@@ -608,7 +608,11 @@ func (s *Service) Sync(ctx context.Context, key string) (Refinement, error) {
 				statuses[i] = gitsync.Status{Name: name, Error: "no longer in the config"}
 				return
 			}
-			statuses[i] = s.Git.Fetch(ctx, name, dir)
+			st, err := s.Git.Fetch(ctx, name, dir)
+			if err != nil {
+				st.Error = err.Error()
+			}
+			statuses[i] = st
 		})
 	}
 	wg.Wait()

@@ -167,11 +167,11 @@ type fakeGit struct {
 	checkouts []string
 }
 
-func (g *fakeGit) Fetch(_ context.Context, name, dir string) gitsync.Status {
+func (g *fakeGit) Fetch(_ context.Context, name, dir string) (gitsync.Status, error) {
 	if g.fail[name] {
-		return gitsync.Status{Name: name, Dir: dir, Error: "could not reach origin"}
+		return gitsync.Status{Name: name, Dir: dir}, errors.New("could not reach origin")
 	}
-	return gitsync.Status{Name: name, Dir: dir, Branch: "develop", Commit: "abc123" + name, New: 2}
+	return gitsync.Status{Name: name, Dir: dir, Branch: "develop", Commit: "abc123" + name, New: 2}, nil
 }
 func (g *fakeGit) Checkout(_ context.Context, repo, commit, dest string) error {
 	g.checkouts = append(g.checkouts, commit+" "+dest)
@@ -369,7 +369,7 @@ func TestSyncBlocksOnAFailedFetch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Step != StepRepos || len(r.Synced) != 2 || r.Synced[0].Name != "admin" || r.Synced[0].Error == "" {
+	if r.Step != StepRepos || len(r.Synced) != 2 || r.Synced[0].Name != "admin" || r.Synced[0].Error != "could not reach origin" {
 		t.Fatalf("blocked sync = %+v", r)
 	}
 	g.fail["admin"] = false
