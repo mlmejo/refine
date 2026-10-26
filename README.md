@@ -32,12 +32,17 @@ headless and read-only) only judges.
 
 ## Setup
 
-Copy the example config and put your email in it:
+Copy the example config, readable by you alone since it holds your token:
 
 ```sh
 mkdir -p ~/.config/refine
 cp config.toml.example ~/.config/refine/config.toml
+chmod 600 ~/.config/refine/config.toml
 ```
+
+Then fill in your email, and an API token created in your
+[Atlassian account's security settings](https://id.atlassian.com/manage-profile/security/api-tokens).
+refine refuses to start when others can read a config that holds a token.
 
 Every key it takes:
 
@@ -45,6 +50,7 @@ Every key it takes:
 [jira]
 site = "geekee.atlassian.net"
 email = "you@example.com"
+token = "..."
 # Optional; these are the defaults.
 project = "GEEK"
 sprint = "Refinement Ready - Team John"
@@ -55,15 +61,8 @@ api = "~/develop/api"
 web = "~/develop/web"
 ```
 
-Repos can also be added and removed from the app.
-
-Create an API token in your
-[Atlassian account's security settings](https://id.atlassian.com/manage-profile/security/api-tokens).
-Put it in `.env` at the repo root, or export it:
-
-```sh
-REFINE_JIRA_TOKEN=...
-```
+Repos can also be added and removed from the app. `REFINE_JIRA_TOKEN`, when
+set, takes the place of the token in the file.
 
 How Acceptance Criteria and Technical Implementation are written lives in
 `~/.config/refine/ac.md` and `~/.config/refine/ti.md`, created with the
@@ -78,7 +77,7 @@ make dist    # builds desktop/dist/mac*/refine.app with the binary bundled
 ```
 
 See [desktop/README.md](desktop/README.md) for how the app talks to the
-backend and the environment variables it reads (`REFINE_DIR`, `REFINE_BIN`,
+backend and the environment variables it reads (`REFINE_BIN`,
 `XDG_STATE_HOME`).
 
 refine keeps its state in `~/.local/state/refine`: `refine.db`, `hidden.json`

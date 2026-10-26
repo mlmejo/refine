@@ -13,7 +13,8 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// TokenEnv names the environment variable holding the Atlassian API token.
+// TokenEnv names the environment variable that overrides the Atlassian API
+// token in the config.
 const TokenEnv = "REFINE_JIRA_TOKEN"
 
 // DefaultProject prefixes a bare ticket number typed on the home screen.
@@ -25,20 +26,20 @@ const DefaultSprint = "Refinement Ready - Team John"
 // DefaultReadySprint is where a ticket goes once its refinement is written.
 const DefaultReadySprint = "Ready for Sprint - Team John"
 
-// Config is the whole config file plus the token.
+// Config is the whole config file.
 type Config struct {
 	Jira  Jira              `toml:"jira"`
 	Repos map[string]string `toml:"repos"`
 }
 
-// Jira holds the Jira site and account.
+// Jira holds the Jira site and account, and the account's API token.
 type Jira struct {
 	Site        string `toml:"site"`
 	Email       string `toml:"email"`
 	Sprint      string `toml:"sprint"`
 	ReadySprint string `toml:"ready_sprint"`
 	Project     string `toml:"project"`
-	Token       string `toml:"-"`
+	Token       string `toml:"token"`
 }
 
 // Path returns ~/.config/refine/config.toml, on macOS too.
@@ -62,7 +63,9 @@ func StateDir() (string, error) {
 	return filepath.Join(home, ".local", "state", "refine"), nil
 }
 
-// Load reads the config at path and the token from the environment.
+// Load reads the config at path. TokenEnv, when set, takes the place of the
+// token in the file. A file holding the token must be readable by its owner
+// alone.
 func Load(path string) (Config, error) {
 	var cfg Config
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
@@ -72,7 +75,18 @@ func Load(path string) (Config, error) {
 		return cfg, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	cfg.Jira.Token = token(".env")
+	if cfg.Jira.Token != "" {
+		info, err := os.Stat(path)
+		if err != nil {
+			return cfg, err
+		}
+		if info.Mode().Perm()&0o077 != 0 {
+			return cfg, fmt.Errorf("%s holds the Jira token but others can read it: run chmod 600 %s", path, path)
+		}
+	}
+	if value := os.Getenv(TokenEnv); value != "" {
+		cfg.Jira.Token = value
+	}
 	if cfg.Jira.Sprint == "" {
 		cfg.Jira.Sprint = DefaultSprint
 	}
@@ -89,44 +103,6 @@ func Load(path string) (Config, error) {
 	return cfg, cfg.validate(path)
 }
 
-// token reads TokenEnv from the environment, else from the first .env file that sets it.
-func token(envFiles ...string) string {
-	if value := os.Getenv(TokenEnv); value != "" {
-		return value
-	}
-	for _, file := range envFiles {
-		if value := readEnvFile(file)[TokenEnv]; value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-// readEnvFile parses KEY=VALUE lines, skipping blanks, comments and "export ".
-func readEnvFile(path string) map[string]string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	values := map[string]string{}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, value, ok := strings.Cut(strings.TrimPrefix(line, "export "), "=")
-		if !ok {
-			continue
-		}
-		value = strings.TrimSpace(value)
-		if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') && value[len(value)-1] == value[0] {
-			value = value[1 : len(value)-1]
-		}
-		values[strings.TrimSpace(key)] = value
-	}
-	return values
-}
-
 func (c Config) validate(path string) error {
 	var missing []string
 	if c.Jira.Site == "" {
@@ -135,11 +111,11 @@ func (c Config) validate(path string) error {
 	if c.Jira.Email == "" {
 		missing = append(missing, "jira.email")
 	}
+	if c.Jira.Token == "" {
+		missing = append(missing, "jira.token")
+	}
 	if len(missing) > 0 {
 		return fmt.Errorf("%s: missing %s", path, strings.Join(missing, ", "))
-	}
-	if c.Jira.Token == "" {
-		return fmt.Errorf("%s is not set in the environment or ./.env", TokenEnv)
 	}
 	return nil
 }

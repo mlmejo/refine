@@ -25,12 +25,6 @@ function binary(): string {
   return resolve(app.getAppPath(), '..', 'bin', 'refine')
 }
 
-// projectDir is where refine runs, so its config reads the project's .env:
-// REFINE_DIR, else the repo this app sits in.
-function projectDir(): string {
-  return process.env.REFINE_DIR || resolve(app.getAppPath(), '..')
-}
-
 // loginPath reads PATH from the login shell. An app opened from the Finder
 // gets a bare PATH, and refine needs claude and git from the user's.
 export function useLoginPath(): void {
@@ -53,7 +47,7 @@ export function startBackend(onExit: (error: string) => void): Promise<Backend> 
   if (!existsSync(bin)) {
     return Promise.reject(new Error(`refine binary not found at ${bin}; run pnpm go:build`))
   }
-  const child = spawn(bin, ['serve'], { cwd: projectDir(), stdio: ['pipe', 'pipe', 'pipe'] })
+  const child = spawn(bin, ['serve'], { stdio: ['pipe', 'pipe', 'pipe'] })
   let stderr = ''
   child.stderr.on('data', (chunk) => {
     stderr = (stderr + chunk.toString()).slice(-4000)

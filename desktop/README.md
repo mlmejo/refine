@@ -12,9 +12,8 @@ pnpm dev              # builds ../bin/refine, then runs the app with hot reload
 pnpm dist             # builds dist/mac*/refine.app with the binary bundled
 ```
 
-The app runs refine from the project root, so refine reads the Jira token
-from the project's `.env` (or from `REFINE_JIRA_TOKEN`). A packaged app has no
-project root next to it: set `REFINE_DIR` to the repo. It takes `claude` and
-`git` from your login shell's PATH. `REFINE_BIN` points it at another refine
+refine reads the Jira token from `~/.config/refine/config.toml`, or from
+`REFINE_JIRA_TOKEN`. The app takes `claude` and `git` from your login shell's
+PATH. `REFINE_BIN` points it at another refine
 binary, and `XDG_STATE_HOME` at another state folder, e.g. to try it without
 touching your refinements.

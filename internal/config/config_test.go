@@ -43,10 +43,7 @@ dating = "~/creativex/dating"
 
 func TestLoadNeedsSiteEmailAndToken(t *testing.T) {
 	t.Setenv(TokenEnv, "")
-	if _, err := Load(write(t, "[jira]\n")); err == nil || !strings.Contains(err.Error(), "jira.site, jira.email") {
-		t.Errorf("err = %v", err)
-	}
-	if _, err := Load(write(t, "[jira]\nsite = \"s\"\nemail = \"e\"\n")); err == nil || !strings.Contains(err.Error(), TokenEnv) {
+	if _, err := Load(write(t, "[jira]\n")); err == nil || !strings.Contains(err.Error(), "jira.site, jira.email, jira.token") {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -57,39 +54,37 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
-func TestTokenFromEnvFiles(t *testing.T) {
+func TestLoadReadsTheTokenFromTheFile(t *testing.T) {
 	t.Setenv(TokenEnv, "")
-	dir := t.TempDir()
-	first := filepath.Join(dir, "first.env")
-	second := filepath.Join(dir, "second.env")
-	os.WriteFile(first, []byte("# comment\nOTHER=x\n"), 0o600)
-	os.WriteFile(second, []byte("export REFINE_JIRA_TOKEN = \"from-file\"\n"), 0o600)
-
-	if got := token(filepath.Join(dir, "missing.env"), first, second); got != "from-file" {
-		t.Errorf("token = %q", got)
-	}
-
-	os.WriteFile(first, []byte("REFINE_JIRA_TOKEN='first'\n"), 0o600)
-	if got := token(first, second); got != "first" {
-		t.Errorf("first file should win, token = %q", got)
+	path := write(t, "[jira]\nsite = \"s\"\nemail = \"e\"\ntoken = \"from-file\"\n")
+	cfg, err := Load(path)
+	if err != nil || cfg.Jira.Token != "from-file" {
+		t.Errorf("token = %q err = %v", cfg.Jira.Token, err)
 	}
 
 	t.Setenv(TokenEnv, "from-env")
-	if got := token(first, second); got != "from-env" {
-		t.Errorf("environment should win, token = %q", got)
+	if cfg, err := Load(path); err != nil || cfg.Jira.Token != "from-env" {
+		t.Errorf("environment should win, token = %q err = %v", cfg.Jira.Token, err)
 	}
 }
 
-func TestLoadReadsEnvFileInWorkingDir(t *testing.T) {
+func TestLoadRefusesATokenOthersCanRead(t *testing.T) {
 	t.Setenv(TokenEnv, "")
-	dir := t.TempDir()
-	t.Chdir(dir)
-	path := write(t, "[jira]\nsite = \"s\"\nemail = \"e\"\n")
-	os.WriteFile(filepath.Join(dir, ".env"), []byte("REFINE_JIRA_TOKEN=secret\n"), 0o600)
+	path := write(t, "[jira]\nsite = \"s\"\nemail = \"e\"\ntoken = \"secret\"\n")
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "chmod 600") {
+		t.Errorf("err = %v", err)
+	}
 
-	cfg, err := Load(path)
-	if err != nil || cfg.Jira.Token != "secret" {
-		t.Errorf("token = %q err = %v", cfg.Jira.Token, err)
+	// Without a token in it, the file may be read by anyone.
+	if err := os.WriteFile(path, []byte("[jira]\nsite = \"s\"\nemail = \"e\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(TokenEnv, "from-env")
+	if _, err := Load(path); err != nil {
+		t.Errorf("err = %v", err)
 	}
 }
 
