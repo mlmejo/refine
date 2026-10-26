@@ -125,26 +125,32 @@ func (s *Service) act(ctx context.Context, r Refinement, id string, target **jir
 func fields(criteria []string, repos []RepoFiles, decisions []string, ratings Ratings, points int) jira.Refinement {
 	var ac strings.Builder
 	for _, item := range criteria {
-		ac.WriteString("* " + item + "\n")
+		ac.WriteString("* ")
+		ac.WriteString(item)
+		ac.WriteByte('\n')
 	}
 	var ti strings.Builder
 	for i, repo := range repos {
 		if i > 0 {
 			ti.WriteString("\n")
 		}
-		ti.WriteString(repo.Repo + "\n\n")
+		ti.WriteString(repo.Repo)
+		ti.WriteString("\n\n")
 		for _, file := range repo.Files {
-			line := "* " + file.Path
+			ti.WriteString("* ")
+			ti.WriteString(file.Path)
 			if file.New {
-				line += " (new)"
+				ti.WriteString(" (new)")
 			}
-			ti.WriteString(line + "\n")
+			ti.WriteByte('\n')
 		}
 	}
 	if len(decisions) > 0 {
 		ti.WriteString("\n---\n\n")
 		for _, d := range decisions {
-			ti.WriteString("* " + d + "\n")
+			ti.WriteString("* ")
+			ti.WriteString(d)
+			ti.WriteByte('\n')
 		}
 	}
 	var spc []string

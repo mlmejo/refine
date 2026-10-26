@@ -119,7 +119,7 @@ func (s *Service) List(ctx context.Context) (Page, error) {
 	if err != nil {
 		return Page{}, err
 	}
-	records := map[string]Refinement{}
+	records := make(map[string]Refinement, len(all))
 	for _, r := range all {
 		records[r.Key] = r
 	}
@@ -699,7 +699,7 @@ func (s *Service) Ask(ctx context.Context, key string, progress func(claude.Acti
 		return Refinement{}, err
 	}
 	found := s.found(ctx, key, r, out.Blockers)
-	var qs []Question
+	qs := make([]Question, 0, len(out.Questions))
 	for _, q := range out.Questions {
 		qs = append(qs, Question{Text: q.Question, Options: q.Options, Recommended: q.Recommended, Why: q.Why})
 	}
@@ -1147,7 +1147,7 @@ func (s *Service) Profiles() ([]Profile, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := []Profile{}
+	out := make([]Profile, 0, len(all))
 	for _, name := range slices.Sorted(maps.Keys(all)) {
 		out = append(out, all[name])
 	}
