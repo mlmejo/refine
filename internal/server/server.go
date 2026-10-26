@@ -27,11 +27,12 @@ import (
 	"github.com/mlmejo/refine/internal/version"
 )
 
-// Repos reads and changes the configured repos.
-type Repos struct {
-	List   func() map[string]string
-	Add    func(name, dir string) error
-	Remove func(name string) error
+// Repos reads and changes the configured repos. List returns a map the
+// caller may keep.
+type Repos interface {
+	List() map[string]string
+	Add(name, dir string) error
+	Remove(name string) error
 }
 
 // Info is what the app shows about this refine.

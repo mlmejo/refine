@@ -53,6 +53,12 @@ type Git interface {
 	Checkout(ctx context.Context, repo, commit, dest string) error
 }
 
+// Repos lists the configured repos by name. List returns a map the caller
+// may keep.
+type Repos interface {
+	List() map[string]string
+}
+
 // Service runs refinements.
 type Service struct {
 	Jira   Jira
@@ -63,9 +69,9 @@ type Service struct {
 	// stamped ticket moves into.
 	Sprint      string
 	ReadySprint string
-	// Repos are the configured repos by name, read when called so a change
-	// applies to the next step.
-	Repos func() map[string]string
+	// Repos are the configured repos, listed when needed so a change applies
+	// to the next step.
+	Repos Repos
 	// Worktrees is where each repo's commit is checked out for Claude.
 	Worktrees string
 	// Hidden reports tickets the developer hid from the list.
@@ -479,7 +485,7 @@ func (s *Service) check(ctx context.Context, key string) (Refinement, error) {
 
 // SetRepos records the repos picked for the ticket.
 func (s *Service) SetRepos(key string, repos []string) (Refinement, error) {
-	configured := s.Repos()
+	configured := s.Repos.List()
 	for _, name := range repos {
 		if _, ok := configured[name]; !ok {
 			return Refinement{}, fmt.Errorf("no repo named %s in the config", name)
@@ -510,7 +516,7 @@ func (s *Service) Suggest(ctx context.Context, key string) (Refinement, error) {
 	if r.Suggestion != nil {
 		return r, nil
 	}
-	repos := slices.Sorted(maps.Keys(s.Repos()))
+	repos := slices.Sorted(maps.Keys(s.Repos.List()))
 	suggestion := Suggestion{Repos: []SuggestedRepo{}}
 	var cost float64
 	if len(repos) > 0 {
@@ -580,7 +586,7 @@ func (s *Service) Sync(ctx context.Context, key string) (Refinement, error) {
 	if len(r.Repos) == 0 {
 		return Refinement{}, errors.New("pick at least one repo")
 	}
-	configured := s.Repos()
+	configured := s.Repos.List()
 	statuses := make([]gitsync.Status, len(r.Repos))
 	var wg sync.WaitGroup
 	for i, name := range r.Repos {
@@ -606,7 +612,7 @@ func (s *Service) Sync(ctx context.Context, key string) (Refinement, error) {
 // checkout puts each repo's synced commit in its worktree and returns the
 // directories Claude reads.
 func (s *Service) checkout(ctx context.Context, r Refinement) (map[string]string, error) {
-	configured := s.Repos()
+	configured := s.Repos.List()
 	dirs := map[string]string{}
 	for _, name := range r.Repos {
 		st, ok := r.Commit(name)

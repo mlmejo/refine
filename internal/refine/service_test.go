@@ -152,6 +152,10 @@ func ticket(key, summary string, refined bool) jira.Ticket {
 	return t
 }
 
+type fakeRepos map[string]string
+
+func (r fakeRepos) List() map[string]string { return maps.Clone(r) }
+
 func setup() (*Service, *fakeJira, *fakeClaude, *memStore, *fakeGit) {
 	j := &fakeJira{tickets: map[string]jira.Ticket{
 		"GEEK-100": ticket("GEEK-100", "Integrate Stripe payments API", true),
@@ -163,9 +167,7 @@ func setup() (*Service, *fakeJira, *fakeClaude, *memStore, *fakeGit) {
 	st := &memStore{refinements: map[string]Refinement{}, profiles: map[string]Profile{}}
 	g := &fakeGit{fail: map[string]bool{}}
 	s := &Service{Jira: j, Claude: c, Store: st, Git: g, Sprint: "Refinement Ready - Team John", ReadySprint: "Ready for Sprint - Team John",
-		Repos: func() map[string]string {
-			return map[string]string{"admin": "/r/admin", "dating-backend": "/r/dating-backend", "costs": "/r/costs"}
-		},
+		Repos:     fakeRepos{"admin": "/r/admin", "dating-backend": "/r/dating-backend", "costs": "/r/costs"},
 		Worktrees: "/w"}
 	return s, j, c, st, g
 }
