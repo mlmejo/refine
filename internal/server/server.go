@@ -491,7 +491,7 @@ func (s *Server) setFormat(w http.ResponseWriter, r *http.Request) {
 // the developer refines one ticket at a time.
 type job struct {
 	ID      string            `json:"id"`
-	Kind    string            `json:"kind"`
+	Kind    jobKind           `json:"kind"`
 	Key     string            `json:"key"`
 	Started time.Time         `json:"started"`
 	Done    bool              `json:"done"`
@@ -501,13 +501,16 @@ type job struct {
 	cancel context.CancelFunc
 }
 
+// jobKind is what a job asks Claude to do.
+type jobKind string
+
 // The kinds of job.
 const (
-	kindSearch   = "search"
-	kindAsk      = "ask"
-	kindDeploy   = "deploy"
-	kindGenerate = "generate"
-	kindRewrite  = "rewrite"
+	kindSearch   jobKind = "search"
+	kindAsk      jobKind = "ask"
+	kindDeploy   jobKind = "deploy"
+	kindGenerate jobKind = "generate"
+	kindRewrite  jobKind = "rewrite"
 )
 
 // Close cancels the running job, so its Claude run stops with the server.
@@ -552,9 +555,9 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request) {
 // startJob starts a Claude run on a ticket, unless one is running.
 func (s *Server) startJob(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Kind        string `json:"kind"`
-		Key         string `json:"key"`
-		Explanation string `json:"explanation"`
+		Kind        jobKind `json:"kind"`
+		Key         string  `json:"key"`
+		Explanation string  `json:"explanation"`
 	}
 	if !decode(w, r, &body) {
 		return
