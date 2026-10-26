@@ -97,7 +97,7 @@ func setup(t *testing.T) (*Server, chan struct{}) {
 
 func setupJira(t *testing.T, j fakeJira) (*Server, chan struct{}) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "refine.db"))
+	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "refine.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestSetProfileNeedsAKnownRepo(t *testing.T) {
 // readyToStamp puts GEEK-101 at its results, with one split ticket.
 func readyToStamp(t *testing.T, srv *Server) {
 	t.Helper()
-	err := srv.Service.Store.Save(refine.Refinement{Key: "GEEK-101", Step: refine.StepResults,
+	err := srv.Service.Store.Save(context.Background(), refine.Refinement{Key: "GEEK-101", Step: refine.StepResults,
 		Result: &refine.Result{Points: 2, Split: []refine.Child{{Title: "Refunds - Partial", Points: 1}}}})
 	if err != nil {
 		t.Fatal(err)
@@ -242,7 +242,7 @@ func TestStampFinishesWhenTheAppDropsTheRequest(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+srv.Token)
 	srv.Handler().ServeHTTP(httptest.NewRecorder(), req)
 
-	r, _, err := srv.Service.Store.Load("GEEK-101")
+	r, _, err := srv.Service.Store.Load(context.Background(), "GEEK-101")
 	if err != nil || r.Step != refine.StepStamped || r.Stamp.Children[0] != "GEEK-900" {
 		t.Fatalf("after stamp = %+v, err %v", r, err)
 	}
@@ -267,5 +267,24 @@ func TestOverlappingStampsOnATicketConflict(t *testing.T) {
 	}
 	if code := call(t, srv, "DELETE", "/api/tickets/GEEK-101", "", nil); code != http.StatusNoContent {
 		t.Errorf("reset after the stamp finished = %d", code)
+	}
+}
+
+func TestHandlersStopWhenTheRequestIsCancelled(t *testing.T) {
+	srv, _ := setup(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, path := range []string{"/api/tickets/GEEK-101", "/api/repos"} {
+		method := "DELETE"
+		if path == "/api/repos" {
+			method = "GET"
+		}
+		req := httptest.NewRequestWithContext(ctx, method, path, nil)
+		req.Header.Set("Authorization", "Bearer "+srv.Token)
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "context canceled") {
+			t.Errorf("%s %s = %d %s", method, path, rec.Code, rec.Body.String())
+		}
 	}
 }
