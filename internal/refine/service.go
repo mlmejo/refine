@@ -80,6 +80,8 @@ type Service struct {
 	// (ac.md) and Technical Implementation (ti.md). Empty, or a missing file,
 	// means the defaults.
 	FormatDir string
+	// Now is the clock; nil means time.Now.
+	Now func() time.Time
 
 	// mu keeps a refinement's read-change-save from racing another.
 	mu sync.Mutex
@@ -323,6 +325,14 @@ func (s *Service) suggested(ctx context.Context, r Refinement) []SuggestedRepo {
 	return out
 }
 
+// now reads the service's clock.
+func (s *Service) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
+}
+
 // update loads a refinement, lets change edit it, and saves it. Every write
 // goes through update or upsert, which load again under the lock, so a
 // change saved while Claude ran is not lost. Reads take no lock.
@@ -351,7 +361,7 @@ func (s *Service) save(ctx context.Context, key, summary string, create bool, ch
 	if err := change(&r); err != nil {
 		return Refinement{}, err
 	}
-	r.Updated = time.Now()
+	r.Updated = s.now()
 	return r, s.Store.Save(ctx, r)
 }
 
@@ -942,7 +952,7 @@ func (s *Service) Generate(ctx context.Context, key string, progress func(claude
 		byRepo[q.Repo] = append(byRepo[q.Repo], QA{Question: q.Text, Answer: q.Answer})
 	}
 	for _, name := range slices.Sorted(maps.Keys(byRepo)) {
-		if err := s.Store.SaveProfile(ctx, Profile{Repo: name, Answers: byRepo[name], Updated: time.Now()}); err != nil {
+		if err := s.Store.SaveProfile(ctx, Profile{Repo: name, Answers: byRepo[name], Updated: s.now()}); err != nil {
 			return Refinement{}, err
 		}
 	}
@@ -1219,6 +1229,6 @@ func (s *Service) SetProfile(ctx context.Context, p Profile) error {
 			answers = append(answers, qa)
 		}
 	}
-	p.Answers, p.Updated = answers, time.Now()
+	p.Answers, p.Updated = answers, s.now()
 	return s.Store.SaveProfile(ctx, p)
 }

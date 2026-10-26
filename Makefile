@@ -9,7 +9,7 @@ dist: desktop/node_modules
 	cd desktop && pnpm dist
 
 test: desktop/node_modules
-	go test ./...
+	go test -race -shuffle=on ./...
 	cd desktop && pnpm typecheck
 
 # lint runs golangci-lint with .golangci.yml.

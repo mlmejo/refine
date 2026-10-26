@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mlmejo/refine/internal/claude"
 	"github.com/mlmejo/refine/internal/gitsync"
@@ -186,6 +187,9 @@ func ticket(key, summary string, refined bool) jira.Ticket {
 	return t
 }
 
+// now is the clock setup gives the service.
+var now = time.Date(2026, 10, 26, 9, 30, 0, 0, time.UTC)
+
 type fakeRepos map[string]string
 
 func (r fakeRepos) List() map[string]string { return maps.Clone(r) }
@@ -202,7 +206,7 @@ func setup() (*Service, *fakeJira, *fakeClaude, *memStore, *fakeGit) {
 	g := &fakeGit{fail: map[string]bool{}}
 	s := &Service{Jira: j, Claude: c, Store: st, Git: g, Sprint: "Refinement Ready - Team John", ReadySprint: "Ready for Sprint - Team John",
 		Repos:     fakeRepos{"admin": "/r/admin", "dating-backend": "/r/dating-backend", "costs": "/r/costs"},
-		Worktrees: "/w"}
+		Worktrees: "/w", Now: func() time.Time { return now }}
 	return s, j, c, st, g
 }
 
@@ -241,7 +245,7 @@ func TestSearchKeepsOnlyListedTicketsAndCountsTheCost(t *testing.T) {
 	if !strings.Contains(j.jqls[0], `sprint in ("Refinement Ready - Team John", "Ready for Sprint - Team John") AND key != "GEEK-101"`) {
 		t.Errorf("jql = %s", j.jqls[0])
 	}
-	if r.CostUSD != 0.1 || r.Step != StepRelated {
+	if r.CostUSD != 0.1 || r.Step != StepRelated || !r.Updated.Equal(now) {
 		t.Errorf("refinement = %+v", r)
 	}
 }
@@ -554,7 +558,7 @@ func TestGenerateSavesTheProfileAndScoresTheResult(t *testing.T) {
 		!slices.Equal(r.Result.AcceptanceCriteria, []string{"Support can refund a payment."}) {
 		t.Fatalf("result = %+v", r.Result)
 	}
-	if p := st.profiles["dating-backend"]; len(p.Answers) != 1 || p.Answers[0].Answer != "GitHub Actions" {
+	if p := st.profiles["dating-backend"]; len(p.Answers) != 1 || p.Answers[0].Answer != "GitHub Actions" || !p.Updated.Equal(now) {
 		t.Fatalf("profile = %+v", p)
 	}
 	gen := c.calls[len(c.calls)-1]
@@ -564,6 +568,16 @@ func TestGenerateSavesTheProfileAndScoresTheResult(t *testing.T) {
 	deploy := c.calls[len(c.calls)-2]
 	if !strings.Contains(deploy.Prompt, "Repos with no saved deployment profile: dating-backend.") {
 		t.Fatalf("deploy prompt = %s", deploy.Prompt)
+	}
+}
+
+func TestSetProfileKeepsAnsweredQuestionsAndStampsTheTime(t *testing.T) {
+	s, _, _, st, _ := setup()
+	if err := s.SetProfile(context.Background(), Profile{Repo: "admin", Answers: []QA{{Question: " How? ", Answer: " Forge "}, {Question: "Who?"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if p := st.profiles["admin"]; !slices.Equal(p.Answers, []QA{{Question: "How?", Answer: "Forge"}}) || !p.Updated.Equal(now) {
+		t.Fatalf("profile = %+v", p)
 	}
 }
 
