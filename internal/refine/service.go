@@ -226,9 +226,7 @@ func (s *Service) Open(ctx context.Context, key string) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
-	s.mu.Lock()
 	r, started, err := s.Store.Load(key)
-	s.mu.Unlock()
 	if err != nil {
 		return View{}, err
 	}
@@ -303,8 +301,19 @@ func (s *Service) suggested(r Refinement) []SuggestedRepo {
 	return out
 }
 
-// update loads a refinement, lets change edit it, and saves it.
+// update loads a refinement, lets change edit it, and saves it. Every write
+// goes through update or upsert, which load again under the lock, so a
+// change saved while Claude ran is not lost. Reads take no lock.
 func (s *Service) update(key string, change func(*Refinement) error) (Refinement, error) {
+	return s.save(key, "", false, change)
+}
+
+// upsert is update, starting from a new refinement when the ticket has none.
+func (s *Service) upsert(key, summary string, change func(*Refinement) error) (Refinement, error) {
+	return s.save(key, summary, true, change)
+}
+
+func (s *Service) save(key, summary string, create bool, change func(*Refinement) error) (Refinement, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok, err := s.Store.Load(key)
@@ -312,7 +321,10 @@ func (s *Service) update(key string, change func(*Refinement) error) (Refinement
 		return Refinement{}, err
 	}
 	if !ok {
-		return Refinement{}, fmt.Errorf("%s has no refinement", key)
+		if !create {
+			return Refinement{}, fmt.Errorf("%s has no refinement", key)
+		}
+		r = New(key, summary)
 	}
 	if err := change(&r); err != nil {
 		return Refinement{}, err
@@ -329,9 +341,7 @@ func (s *Service) Search(ctx context.Context, key, explanation string, progress 
 	if err != nil {
 		return Refinement{}, err
 	}
-	s.mu.Lock()
 	r, ok, err := s.Store.Load(key)
-	s.mu.Unlock()
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -367,10 +377,6 @@ func (s *Service) Search(ctx context.Context, key, explanation string, progress 
 	for _, c := range candidates {
 		byKey[c.Key] = c
 	}
-	decided := map[string]string{}
-	for _, b := range r.Related.Blockers {
-		decided[b.Key] = b.Decision
-	}
 	related := Related{Searched: true, Explanations: explanations, Blockers: []Blocker{}, Overlaps: []Overlap{}}
 	seen := map[string]bool{key: true}
 	for _, b := range out.Blockers {
@@ -380,7 +386,7 @@ func (s *Service) Search(ctx context.Context, key, explanation string, progress 
 		}
 		seen[b.Key] = true
 		related.Blockers = append(related.Blockers, Blocker{Key: c.Key, Summary: c.Summary, Reason: b.Reason,
-			Quote: b.Quote, Refined: c.Refined(), Decision: decided[c.Key]})
+			Quote: b.Quote, Refined: c.Refined()})
 	}
 	for _, o := range out.Overlaps {
 		c, ok := byKey[o.Key]
@@ -391,12 +397,20 @@ func (s *Service) Search(ctx context.Context, key, explanation string, progress 
 		related.Overlaps = append(related.Overlaps, Overlap{Key: c.Key, Summary: c.Summary, Reason: o.Reason})
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r.Summary, r.Related = t.Summary, related
-	r.CostUSD += run.CostUSD
-	r.Updated = time.Now()
-	return r, s.Store.Save(r)
+	// Decisions are read again here, so one made while Claude ran is kept.
+	return s.upsert(key, t.Summary, func(r *Refinement) error {
+		if r.Step != StepRelated {
+			return fmt.Errorf("related tickets: %w", ErrStep)
+		}
+		for i, b := range related.Blockers {
+			if j := slices.IndexFunc(r.Related.Blockers, func(o Blocker) bool { return o.Key == b.Key }); j >= 0 {
+				related.Blockers[i].Decision = r.Related.Blockers[j].Decision
+			}
+		}
+		r.Summary, r.Related = t.Summary, related
+		r.CostUSD += run.CostUSD
+		return nil
+	})
 }
 
 // Decide accepts or rejects a blocker. A blocker Claude found while reading
@@ -498,9 +512,7 @@ func (s *Service) SetRepos(key string, repos []string) (Refinement, error) {
 // Suggest asks Claude which configured repos the ticket's title and labels
 // point at, once per refinement. Claude reads only the repos' names.
 func (s *Service) Suggest(ctx context.Context, key string) (Refinement, error) {
-	s.mu.Lock()
 	r, ok, err := s.Store.Load(key)
-	s.mu.Unlock()
 	if err != nil {
 		return Refinement{}, err
 	}
