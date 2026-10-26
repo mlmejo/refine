@@ -37,23 +37,23 @@ type Status struct {
 // Fetch picks the repo's branch and fetches it from origin.
 func Fetch(ctx context.Context, name, dir string) Status {
 	s := Status{Name: name, Dir: dir}
-	branch, err := branch(ctx, dir)
+	b, err := pickBranch(ctx, dir)
 	if err != nil {
 		s.Error = err.Error()
 		return s
 	}
-	s.Branch = branch
-	upstream := "refs/remotes/origin/" + branch
+	s.Branch = b
+	upstream := "refs/remotes/origin/" + b
 	before, _ := git(ctx, dir, "rev-parse", "--verify", "--quiet", upstream+"^{commit}")
 
 	fetchCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
-	if _, err := git(fetchCtx, dir, "fetch", "--quiet", "origin", "+refs/heads/"+branch+":"+upstream); err != nil {
-		s.Error = "could not fetch " + branch + " from origin: " + err.Error()
+	if _, err := git(fetchCtx, dir, "fetch", "--quiet", "origin", "+refs/heads/"+b+":"+upstream); err != nil {
+		s.Error = "could not fetch " + b + " from origin: " + err.Error()
 		return s
 	}
 	if s.Commit, err = git(ctx, dir, "rev-parse", "--verify", "--quiet", upstream+"^{commit}"); err != nil {
-		s.Error = "origin has no " + branch + " branch"
+		s.Error = "origin has no " + b + " branch"
 		return s
 	}
 	if before != "" && before != s.Commit {
@@ -64,8 +64,8 @@ func Fetch(ctx context.Context, name, dir string) Status {
 	return s
 }
 
-// branch is develop when origin has it, else origin's default branch.
-func branch(ctx context.Context, dir string) (string, error) {
+// pickBranch returns develop when origin has it, else origin's default branch.
+func pickBranch(ctx context.Context, dir string) (string, error) {
 	listCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 	out, err := git(listCtx, dir, "ls-remote", "--symref", "origin", "HEAD", "refs/heads/"+Preferred)
