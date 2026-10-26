@@ -10,7 +10,8 @@ const jobNames: Record<JobKind, string> = {
   search: 'Related tickets are ready to review',
   ask: 'Questions are ready',
   deploy: 'Deployment questions are ready',
-  generate: 'The results are ready to review'
+  generate: 'The results are ready to review',
+  rewrite: 'Acceptance Criteria and Technical Implementation are rewritten'
 }
 
 function useRefineState() {

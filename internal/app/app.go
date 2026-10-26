@@ -4,7 +4,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -110,6 +112,12 @@ func Open() (*App, error) {
 		ReadySprint: cfg.Jira.ReadySprint,
 		Repos:       repos.List,
 		Worktrees:   filepath.Join(state, "worktrees"),
+		WriteupPath: filepath.Join(filepath.Dir(path), "writeup.md"),
+	}
+	if _, err := os.Stat(service.WriteupPath); errors.Is(err, fs.ErrNotExist) {
+		if err := service.SetWriteup(""); err != nil {
+			return nil, err
+		}
 	}
 	info := server.Info{Site: cfg.Jira.Site, Project: cfg.Jira.Project, Sprint: cfg.Jira.Sprint, ReadySprint: cfg.Jira.ReadySprint}
 	srv := server.New(info, service, repos, hiddenKeys, hiddenStore.Save)

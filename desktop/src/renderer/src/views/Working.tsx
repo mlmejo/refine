@@ -6,14 +6,16 @@ const titles: Record<Job['kind'], string> = {
   search: 'Claude is looking for related tickets',
   ask: 'Claude is reading the code for the next questions',
   deploy: 'Claude is reading how the repos deploy',
-  generate: 'Claude is writing up the ticket'
+  generate: 'Claude is writing up the ticket',
+  rewrite: 'Claude is rewriting the Acceptance Criteria and Technical Implementation'
 }
 
 const hints: Record<Job['kind'], string> = {
   search: 'No code, so usually well under a minute.',
   ask: 'Usually about 2 minutes.',
   deploy: 'Usually a minute or two.',
-  generate: 'Usually about 2 minutes.'
+  generate: 'Usually about 2 minutes.',
+  rewrite: 'Usually about 2 minutes.'
 }
 
 function clock(ms: number): string {

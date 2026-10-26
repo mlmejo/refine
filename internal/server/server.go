@@ -99,6 +99,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/repos/scan", s.scan)
 	mux.HandleFunc("GET /api/folders", s.folders)
 	mux.HandleFunc("PUT /api/profiles/{repo}", s.setProfile)
+	mux.HandleFunc("GET /api/writeup", s.writeup)
+	mux.HandleFunc("PUT /api/writeup", s.setWriteup)
+	mux.HandleFunc("DELETE /api/writeup", s.setWriteup)
 	mux.HandleFunc("GET /api/job", s.currentJob)
 	mux.HandleFunc("POST /api/jobs", s.startJob)
 	mux.HandleFunc("DELETE /api/jobs/{id}", s.cancelJob)
@@ -433,6 +436,38 @@ func (s *Server) setProfile(w http.ResponseWriter, r *http.Request) {
 	s.repos(w, r)
 }
 
+// writeup replies with where the write-up rules live and whether they are
+// the developer's own.
+func (s *Server) writeup(w http.ResponseWriter, r *http.Request) {
+	text, err := s.Service.Writeup()
+	if err != nil {
+		fail(w, http.StatusInternalServerError, err)
+		return
+	}
+	reply(w, map[string]any{"path": s.Service.WriteupPath, "custom": strings.TrimSpace(text) != strings.TrimSpace(refine.DefaultWriteup)})
+}
+
+// setWriteup takes uploaded write-up rules, or puts the defaults back.
+func (s *Server) setWriteup(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Text string `json:"text"`
+	}
+	if r.Method == http.MethodPut {
+		if !decode(w, r, &body) {
+			return
+		}
+		if strings.TrimSpace(body.Text) == "" {
+			fail(w, http.StatusBadRequest, errors.New("the file is empty"))
+			return
+		}
+	}
+	if err := s.Service.SetWriteup(body.Text); err != nil {
+		fail(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.writeup(w, r)
+}
+
 // A job is one Claude run. Runs take minutes, so the app starts one and
 // polls it, showing what Claude reads as it goes. One runs at a time, since
 // the developer refines one ticket at a time.
@@ -454,6 +489,7 @@ const (
 	kindAsk      = "ask"
 	kindDeploy   = "deploy"
 	kindGenerate = "generate"
+	kindRewrite  = "rewrite"
 )
 
 // Close cancels the running job, so its Claude run stops with the server.
@@ -525,6 +561,11 @@ func (s *Server) startJob(w http.ResponseWriter, r *http.Request) {
 	case kindGenerate:
 		work = func(ctx context.Context, p func(claude.Activity)) error {
 			_, err := s.Service.Generate(ctx, body.Key, p)
+			return err
+		}
+	case kindRewrite:
+		work = func(ctx context.Context, p func(claude.Activity)) error {
+			_, err := s.Service.Rewrite(ctx, body.Key, p)
 			return err
 		}
 	default:

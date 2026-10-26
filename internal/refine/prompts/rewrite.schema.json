@@ -1,0 +1,108 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "acceptance_criteria",
+    "technical_implementation",
+    "split"
+  ],
+  "properties": {
+    "acceptance_criteria": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "technical_implementation": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "repo",
+          "files"
+        ],
+        "properties": {
+          "repo": {
+            "type": "string",
+            "description": "Bare repo name, no annotation."
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "new"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "new": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "split": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "acceptance_criteria",
+          "technical_implementation"
+        ],
+        "properties": {
+          "acceptance_criteria": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "technical_implementation": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "repo",
+                "files"
+              ],
+              "properties": {
+                "repo": {
+                  "type": "string",
+                  "description": "Bare repo name, no annotation."
+                },
+                "files": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "path",
+                      "new"
+                    ],
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "new": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

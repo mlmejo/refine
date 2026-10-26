@@ -40,10 +40,21 @@ var generateText string
 //go:embed prompts/generate.schema.json
 var generateSchema string
 
+//go:embed prompts/rewrite.md
+var rewriteText string
+
+//go:embed prompts/rewrite.schema.json
+var rewriteSchema string
+
+// DefaultWriteup is how Acceptance Criteria and Technical Implementation are
+// written until the developer uploads their own rules.
+//
+//go:embed prompts/writeup.md
+var DefaultWriteup string
+
 var (
 	questionsRules = withShared(questionsText)
 	deployRules    = withShared(deployText)
-	generateRules  = withShared(generateText)
 )
 
 // withShared puts the sections that steps reading code share in place of
@@ -52,11 +63,17 @@ func withShared(rules string) string {
 	return strings.Replace(rules, "{{working efficiently}}\n", efficiency, 1)
 }
 
+// withWriteup puts the rules for Acceptance Criteria and Technical
+// Implementation in place of their marker.
+func withWriteup(rules, writeup string) string {
+	return withShared(strings.Replace(rules, "{{writeup}}\n", strings.TrimRight(writeup, "\n")+"\n", 1))
+}
+
 // PromptsVersion fingerprints every rule and schema Claude is given, so a
 // refinement can be traced to the prompts that made it.
 func PromptsVersion() string {
 	h := sha256.New()
-	for _, part := range []string{relatedRules, relatedSchema, questionsRules, questionsSchema, deployRules, deploySchema, generateRules, generateSchema} {
+	for _, part := range []string{relatedRules, relatedSchema, questionsRules, questionsSchema, deployRules, deploySchema, generateText, generateSchema, rewriteText, rewriteSchema, DefaultWriteup} {
 		h.Write([]byte(part))
 		h.Write([]byte{0})
 	}
@@ -289,6 +306,36 @@ func generatePrompt(t jira.Ticket, blockers []jira.Ticket, r Refinement, dirs ma
 	}
 	return ticketText(t) + elsewhere(blockers) + reposText(r, dirs) + allAnswers(r) + saved.String() + deploy.String() +
 		"\nWrite up the ticket as your instructions say.\n"
+}
+
+// rewritePrompt asks for the Acceptance Criteria and Technical
+// Implementation again, for the write-up as it stands.
+func rewritePrompt(t jira.Ticket, blockers []jira.Ticket, r Refinement, dirs map[string]string, res Result) string {
+	var current strings.Builder
+	writeFields := func(title string, criteria []string, repos []RepoFiles) {
+		fmt.Fprintf(&current, "\n%s\nAcceptance Criteria:\n", title)
+		for _, c := range criteria {
+			fmt.Fprintf(&current, "- %s\n", c)
+		}
+		current.WriteString("Technical Implementation:\n")
+		for _, repo := range repos {
+			fmt.Fprintf(&current, "%s:\n", repo.Repo)
+			for _, f := range repo.Files {
+				mark := ""
+				if f.New {
+					mark = " (new)"
+				}
+				fmt.Fprintf(&current, "  %s%s\n", f.Path, mark)
+			}
+		}
+	}
+	current.WriteString("\nThe current write-up:\n")
+	writeFields(fmt.Sprintf("Original (%s), the first slice:", t.Key), res.AcceptanceCriteria, res.TechnicalImplementation)
+	for i, c := range res.Split {
+		writeFields(fmt.Sprintf("Split ticket %d, %q:", i+1, c.Title), c.AcceptanceCriteria, c.TechnicalImplementation)
+	}
+	return ticketText(t) + elsewhere(blockers) + reposText(r, dirs) + allAnswers(r) + current.String() +
+		fmt.Sprintf("\nRewrite the Acceptance Criteria and Technical Implementation as your instructions say, for the original and the %d split ticket%s.\n", len(res.Split), plural(len(res.Split)))
 }
 
 func section(out *strings.Builder, name, text string) {

@@ -138,7 +138,11 @@ export type View = {
 
 export type Activity = { verb: string; what: string; at: string }
 
-export type JobKind = 'search' | 'ask' | 'deploy' | 'generate'
+export type JobKind = 'search' | 'ask' | 'deploy' | 'generate' | 'rewrite'
+
+// Writeup is where the rules for Acceptance Criteria and Technical
+// Implementation live, and whether they are the developer's own.
+export type Writeup = { path: string; custom: boolean }
 
 export type Job = {
   id: string

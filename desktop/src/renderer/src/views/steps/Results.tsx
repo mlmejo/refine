@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../../api'
 import { useRefine } from '../../store'
-import type { Rating, Ratings, RepoFiles, Result, View } from '../../types'
+import type { Rating, Ratings, RepoFiles, Result, View, Writeup } from '../../types'
 import { StampDialog } from './StampDialog'
 
 const rows: { key: keyof Ratings; label: string }[] = [
@@ -82,7 +82,27 @@ export function Results({ view, readOnly }: { view: View; readOnly: boolean }) {
   const [result, setResult] = useState<Result>(() => r.result!)
   const [saved, setSaved] = useState(true)
   const [stamping, setStamping] = useState(!!r.stamp.error)
+  const [writeup, setWriteup] = useState<Writeup>()
   const timer = useRef<number>(undefined)
+  const upload = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    void api.writeup().then(setWriteup, () => undefined)
+  }, [])
+
+  const changeWriteup = async (change: () => Promise<Writeup>, done: string) => {
+    try {
+      setWriteup(await change())
+      refine.flash({ text: done })
+    } catch (err) {
+      refine.flash({ text: (err as Error).message, error: true })
+    }
+  }
+
+  const regenerate = async () => {
+    await flush()
+    void refine.run('rewrite', key)
+  }
 
   const change = (next: Result) => {
     setResult(next)
@@ -132,6 +152,32 @@ export function Results({ view, readOnly }: { view: View; readOnly: boolean }) {
                 <h2>Acceptance Criteria</h2>
                 {!locked && <span className="muted small">Click any line to edit. Enter adds a line.</span>}
               </div>
+              {!locked && (
+                <div className="row small" style={{ gap: 8, marginBottom: 8 }}>
+                  <span className="muted" title={writeup?.path}>
+                    Written with {writeup?.custom ? 'your format file' : 'the default format'}.
+                  </span>
+                  <button className="link" onClick={() => upload.current?.click()}>
+                    Upload a format (.md)
+                  </button>
+                  {writeup?.custom && (
+                    <button className="link" onClick={() => void changeWriteup(api.resetWriteup, 'The default format is back')}>
+                      Use the default
+                    </button>
+                  )}
+                  <input
+                    ref={upload}
+                    type="file"
+                    accept=".md,.markdown,text/markdown,text/plain"
+                    hidden
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      e.target.value = ''
+                      if (file) void changeWriteup(async () => api.uploadWriteup(await file.text()), `Uploaded ${file.name}; regenerate to use it`)
+                    }}
+                  />
+                </div>
+              )}
               <Lines
                 lines={result.acceptance_criteria ?? []}
                 readOnly={locked}
@@ -262,8 +308,16 @@ export function Results({ view, readOnly }: { view: View; readOnly: boolean }) {
         <footer className="footbar">
           <span className="muted small">{refine.pending === 'edit' || !saved ? 'Saving…' : locked ? 'Stamp in progress' : 'Edits saved'}</span>
           <button
-            className="btn primary"
+            className="btn"
             style={{ marginLeft: 'auto' }}
+            disabled={!!refine.pending || locked}
+            title="Rewrites the Acceptance Criteria and Technical Implementation with the current format, for this ticket and its split tickets. Your edits to those fields are replaced."
+            onClick={() => void regenerate()}
+          >
+            Regenerate AC &amp; TI
+          </button>
+          <button
+            className="btn primary"
             disabled={!!refine.pending}
             onClick={() => void review()}
           >

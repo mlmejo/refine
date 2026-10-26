@@ -53,6 +53,11 @@ the repo root, or export it:
 REFINE_JIRA_TOKEN=...
 ```
 
+How Acceptance Criteria and Technical Implementation are written lives in
+`~/.config/refine/writeup.md`, created with the defaults on first run. Upload
+a different file from the Results page, then Regenerate AC & TI to rewrite
+them with it.
+
 ## Run
 
 ```sh

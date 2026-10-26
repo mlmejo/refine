@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -68,6 +70,9 @@ type Service struct {
 	Worktrees string
 	// Hidden reports tickets the developer hid from the list.
 	Hidden func(key string) bool
+	// WriteupPath is the markdown file of rules for Acceptance Criteria and
+	// Technical Implementation. Empty, or a missing file, means the defaults.
+	WriteupPath string
 
 	// mu keeps a refinement's read-change-save from racing another.
 	mu sync.Mutex
@@ -808,6 +813,10 @@ func (s *Service) Generate(ctx context.Context, key string, progress func(claude
 	if err != nil {
 		return Refinement{}, err
 	}
+	writeup, err := s.Writeup()
+	if err != nil {
+		return Refinement{}, err
+	}
 	dirs, err := s.checkout(ctx, r)
 	if err != nil {
 		return Refinement{}, err
@@ -815,7 +824,7 @@ func (s *Service) Generate(ctx context.Context, key string, progress func(claude
 	var result Result
 	run, err := s.Claude.Do(ctx, claude.Call{
 		Prompt: generatePrompt(t, blockers, r, dirs, profiles),
-		Rules:  generateRules,
+		Rules:  withWriteup(generateText, writeup),
 		Schema: generateSchema,
 		Repos:  dirs,
 	}, &result, progress)
@@ -827,6 +836,100 @@ func (s *Service) Generate(ctx context.Context, key string, progress func(claude
 		r.CostUSD += run.CostUSD
 		r.Result = &result
 		r.Step = StepResults
+		return nil
+	})
+}
+
+// Writeup reads the rules for Acceptance Criteria and Technical
+// Implementation: the developer's file, or the defaults when there is none.
+func (s *Service) Writeup() (string, error) {
+	if s.WriteupPath == "" {
+		return DefaultWriteup, nil
+	}
+	data, err := os.ReadFile(s.WriteupPath)
+	if errors.Is(err, fs.ErrNotExist) || (err == nil && strings.TrimSpace(string(data)) == "") {
+		return DefaultWriteup, nil
+	}
+	return string(data), err
+}
+
+// SetWriteup replaces the rules for Acceptance Criteria and Technical
+// Implementation; empty text puts the defaults back.
+func (s *Service) SetWriteup(text string) error {
+	if s.WriteupPath == "" {
+		return errors.New("no file for the write-up rules")
+	}
+	if strings.TrimSpace(text) == "" {
+		text = DefaultWriteup
+	}
+	if err := os.MkdirAll(filepath.Dir(s.WriteupPath), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(s.WriteupPath, []byte(text), 0o600)
+}
+
+// Rewrite asks Claude for the Acceptance Criteria and Technical
+// Implementation again, under the current write-up rules, for the original
+// and every split ticket. The ratings, the split and the deploy needs stay.
+func (s *Service) Rewrite(ctx context.Context, key string, progress func(claude.Activity)) (Refinement, error) {
+	r, ok, err := s.Store.Load(key)
+	if err != nil {
+		return Refinement{}, err
+	}
+	if !ok || r.Step != StepResults || r.Result == nil || len(r.Stamp.Done) > 0 {
+		return Refinement{}, fmt.Errorf("rewrite: %w", ErrStep)
+	}
+	t, err := s.Jira.GetTicket(ctx, key)
+	if err != nil {
+		return Refinement{}, err
+	}
+	blockers, err := s.blockers(ctx, r)
+	if err != nil {
+		return Refinement{}, err
+	}
+	writeup, err := s.Writeup()
+	if err != nil {
+		return Refinement{}, err
+	}
+	dirs, err := s.checkout(ctx, r)
+	if err != nil {
+		return Refinement{}, err
+	}
+	var rewritten struct {
+		AcceptanceCriteria      []string    `json:"acceptance_criteria"`
+		TechnicalImplementation []RepoFiles `json:"technical_implementation"`
+		Split                   []struct {
+			AcceptanceCriteria      []string    `json:"acceptance_criteria"`
+			TechnicalImplementation []RepoFiles `json:"technical_implementation"`
+		} `json:"split"`
+	}
+	run, err := s.Claude.Do(ctx, claude.Call{
+		Prompt: rewritePrompt(t, blockers, r, dirs, *r.Result),
+		Rules:  withWriteup(rewriteText, writeup),
+		Schema: rewriteSchema,
+		Repos:  dirs,
+	}, &rewritten, progress)
+	if err != nil {
+		return Refinement{}, err
+	}
+	if len(rewritten.Split) != len(r.Result.Split) {
+		return Refinement{}, fmt.Errorf("Claude rewrote %d split tickets, not %d; try again", len(rewritten.Split), len(r.Result.Split))
+	}
+	return s.update(key, func(r *Refinement) error {
+		if r.Step != StepResults || r.Result == nil || len(r.Stamp.Done) > 0 || len(r.Result.Split) != len(rewritten.Split) {
+			return fmt.Errorf("rewrite: %w", ErrStep)
+		}
+		next := *r.Result
+		next.AcceptanceCriteria = rewritten.AcceptanceCriteria
+		next.TechnicalImplementation = rewritten.TechnicalImplementation
+		next.Split = slices.Clone(next.Split)
+		for i, c := range rewritten.Split {
+			next.Split[i].AcceptanceCriteria = c.AcceptanceCriteria
+			next.Split[i].TechnicalImplementation = c.TechnicalImplementation
+		}
+		next = tidy(next).Scored()
+		r.CostUSD += run.CostUSD
+		r.Result = &next
 		return nil
 	})
 }

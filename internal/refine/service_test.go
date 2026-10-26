@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -488,6 +489,49 @@ func TestEditKeepsPointsInStepWithTheRatings(t *testing.T) {
 	}
 	if r.Result.Points != 2 || r.Result.Split[0].Title != "Refunds - Status and history" || r.Result.Split[0].Points != 1 {
 		t.Fatalf("edited = %+v", r.Result)
+	}
+}
+
+func TestRewriteReplacesOnlyTheCriteriaAndFiles(t *testing.T) {
+	s, _, c, _, _ := setup()
+	s.WriteupPath = filepath.Join(t.TempDir(), "writeup.md")
+	r := toResults(t, s, c)
+	if !strings.Contains(c.calls[len(c.calls)-1].Rules, "## Acceptance Criteria") {
+		t.Fatal("generate rules lack the default write-up rules")
+	}
+	if err := s.SetWriteup("## Acceptance Criteria\nGiven/When/Then, one per line.\n"); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	c.answers = []any{map[string]any{"acceptance_criteria": []string{"Given a payment, when support refunds it, then it shows refunded."},
+		"technical_implementation": []any{}, "split": []any{}}}
+	if _, err := s.Rewrite(ctx, "GEEK-101", nil); err == nil || !strings.Contains(err.Error(), "1") {
+		t.Fatalf("rewrite with a split ticket missing: %v", err)
+	}
+	c.answers = []any{map[string]any{
+		"acceptance_criteria":      []string{"Given a payment, when support refunds it, then it shows refunded."},
+		"technical_implementation": []map[string]any{{"repo": "dating-backend", "files": []map[string]any{{"path": "app/Refunds.php", "new": true}}}},
+		"split":                    []map[string]any{{"acceptance_criteria": []string{"Given a refund, then its status shows."}, "technical_implementation": []any{}}},
+	}}
+	after, err := s.Rewrite(ctx, "GEEK-101", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := c.calls[len(c.calls)-1]
+	if !strings.Contains(call.Rules, "Given/When/Then, one per line.") || !strings.Contains(call.Prompt, "Support can refund a payment.") || !strings.Contains(call.Prompt, `"Refunds - Status"`) {
+		t.Fatalf("rewrite call = %+v", call)
+	}
+	res := after.Result
+	if res.AcceptanceCriteria[0] != "Given a payment, when support refunds it, then it shows refunded." || res.TechnicalImplementation[0].Files[0].Path != "app/Refunds.php" ||
+		res.Split[0].AcceptanceCriteria[0] != "Given a refund, then its status shows." || res.Split[0].Title != "Refunds - Status" ||
+		res.Ratings != r.Result.Ratings || res.Points != r.Result.Points || !slices.Equal(res.DeployNeeds, r.Result.DeployNeeds) {
+		t.Fatalf("rewritten = %+v", res)
+	}
+	if err := s.SetWriteup(""); err != nil {
+		t.Fatal(err)
+	}
+	if text, _ := s.Writeup(); text != DefaultWriteup {
+		t.Fatalf("reset write-up = %q", text)
 	}
 }
 

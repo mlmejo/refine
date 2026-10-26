@@ -12,8 +12,7 @@
     "acceptance_criteria": {
       "type": "array",
       "items": {
-        "type": "string",
-        "description": "One plain sentence, no label or headline."
+        "type": "string"
       }
     },
     "technical_implementation": {

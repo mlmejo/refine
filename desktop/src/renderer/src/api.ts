@@ -1,4 +1,4 @@
-import type { Answers, Found, Info, Job, JobKind, Page, QA, Repo, Result, View } from './types'
+import type { Answers, Found, Info, Job, JobKind, Page, QA, Repo, Result, View, Writeup } from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -51,5 +51,9 @@ export const api = {
   scanRepos: (dir: string) => call<Found[]>('GET', `/api/repos/scan?dir=${encodeURIComponent(dir)}`),
   folderStart: () => call<{ start: string }>('GET', '/api/folders'),
   setProfile: (repo: string, answers: QA[]) =>
-    call<Repo[]>('PUT', `/api/profiles/${encodeURIComponent(repo)}`, { answers })
+    call<Repo[]>('PUT', `/api/profiles/${encodeURIComponent(repo)}`, { answers }),
+
+  writeup: () => call<Writeup>('GET', '/api/writeup'),
+  uploadWriteup: (text: string) => call<Writeup>('PUT', '/api/writeup', { text }),
+  resetWriteup: () => call<Writeup>('DELETE', '/api/writeup')
 }
