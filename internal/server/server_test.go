@@ -19,7 +19,13 @@ import (
 	"github.com/mlmejo/refine/internal/store"
 )
 
-type fakeJira struct{ tickets map[string]jira.Ticket }
+// fakeJira holds tickets. When hold is set, Update waits on it, telling
+// held it has started.
+type fakeJira struct {
+	tickets map[string]jira.Ticket
+	hold    chan struct{}
+	held    chan struct{}
+}
 
 func (f fakeJira) Myself(context.Context) (string, error) { return "Dev", nil }
 func (f fakeJira) Linked(context.Context, string) ([]jira.Ticket, error) {
@@ -35,12 +41,21 @@ func (f fakeJira) GetTicket(_ context.Context, key string) (jira.Ticket, error) 
 	}
 	return t, nil
 }
-func (fakeJira) Update(context.Context, string, jira.Refinement) error { return nil }
-func (fakeJira) Comment(context.Context, string, string) error         { return nil }
+func (f fakeJira) Update(ctx context.Context, _ string, _ jira.Refinement) error {
+	if f.hold != nil {
+		f.held <- struct{}{}
+		<-f.hold
+	}
+	return ctx.Err()
+}
+func (fakeJira) Comment(context.Context, string, string) error { return nil }
 func (fakeJira) Split(context.Context, string, string) (jira.SplitTarget, error) {
 	return jira.SplitTarget{}, nil
 }
-func (fakeJira) CreateChild(context.Context, jira.SplitTarget, jira.NewChild) (string, error) {
+func (fakeJira) CreateChild(ctx context.Context, _ jira.SplitTarget, _ jira.NewChild) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	return "GEEK-900", nil
 }
 func (fakeJira) Relate(context.Context, string, string) error       { return nil }
@@ -69,16 +84,21 @@ func (noGit) Checkout(context.Context, string, string, string) error { return ni
 
 func setup(t *testing.T) (*Server, chan struct{}) {
 	t.Helper()
+	return setupJira(t, fakeJira{})
+}
+
+func setupJira(t *testing.T, j fakeJira) (*Server, chan struct{}) {
+	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "refine.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
 	release := make(chan struct{})
-	j := fakeJira{tickets: map[string]jira.Ticket{
+	j.tickets = map[string]jira.Ticket{
 		"GEEK-100": {Issue: jira.Issue{Key: "GEEK-100", Summary: "Stripe", AcceptanceCriteria: "* a", TechnicalImplementation: "x"}},
 		"GEEK-101": {Issue: jira.Issue{Key: "GEEK-101", Summary: "Refunds"}, DescriptionMarkdown: "Use **Stripe**."},
-	}}
+	}
 	svc := &refine.Service{Jira: j, Claude: slowClaude{release: release}, Store: st, Git: noGit{},
 		Sprint: "S", ReadySprint: "R", Repos: func() map[string]string { return map[string]string{"admin": "/r/admin"} }}
 	srv := New(Info{Project: "GEEK"}, svc, Repos{List: func() map[string]string { return map[string]string{"admin": "/r/admin"} }}, nil, nil)
@@ -192,5 +212,52 @@ func TestSetProfileNeedsAKnownRepo(t *testing.T) {
 	call(t, srv, "PUT", "/api/profiles/admin", `{"answers":[{"question":"How?","answer":"Forge"}]}`, &repos)
 	if len(repos) != 1 || repos[0]["profile"] == nil {
 		t.Fatalf("repos = %+v", repos)
+	}
+}
+
+// readyToStamp puts GEEK-101 at its results, with one split ticket.
+func readyToStamp(t *testing.T, srv *Server) {
+	t.Helper()
+	err := srv.Service.Store.Save(refine.Refinement{Key: "GEEK-101", Step: refine.StepResults,
+		Result: &refine.Result{Points: 2, Split: []refine.Child{{Title: "Refunds - Partial", Points: 1}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStampFinishesWhenTheAppDropsTheRequest(t *testing.T) {
+	srv, _ := setup(t)
+	readyToStamp(t, srv)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest("POST", "/api/tickets/GEEK-101/stamp", nil).WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer "+srv.Token)
+	srv.Handler().ServeHTTP(httptest.NewRecorder(), req)
+
+	r, _, err := srv.Service.Store.Load("GEEK-101")
+	if err != nil || r.Step != refine.StepStamped || r.Stamp.Children[0] != "GEEK-900" {
+		t.Fatalf("after stamp = %+v, err %v", r, err)
+	}
+}
+
+func TestOverlappingStampsOnATicketConflict(t *testing.T) {
+	hold, held := make(chan struct{}), make(chan struct{}, 2)
+	srv, _ := setupJira(t, fakeJira{hold: hold, held: held})
+	readyToStamp(t, srv)
+	first := make(chan int)
+	go func() { first <- call(t, srv, "POST", "/api/tickets/GEEK-101/stamp", "", nil) }()
+	<-held
+	if code := call(t, srv, "POST", "/api/tickets/GEEK-101/stamp", "", nil); code != http.StatusConflict {
+		t.Errorf("second stamp = %d", code)
+	}
+	if code := call(t, srv, "DELETE", "/api/tickets/GEEK-101", "", nil); code != http.StatusConflict {
+		t.Errorf("reset while stamping = %d", code)
+	}
+	close(hold)
+	if code := <-first; code != http.StatusOK {
+		t.Fatalf("first stamp = %d", code)
+	}
+	if code := call(t, srv, "DELETE", "/api/tickets/GEEK-101", "", nil); code != http.StatusNoContent {
+		t.Errorf("reset after the stamp finished = %d", code)
 	}
 }
