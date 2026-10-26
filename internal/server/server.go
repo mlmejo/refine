@@ -595,7 +595,7 @@ func (s *Server) startJob(w http.ResponseWriter, r *http.Request) {
 	if s.job != nil && !s.job.Done {
 		running := *s.job
 		s.mu.Unlock()
-		fail(w, http.StatusConflict, fmt.Errorf("Claude is already working on %s", running.Key))
+		fail(w, http.StatusConflict, fmt.Errorf("Claude is already working on %s", running.Key)) //nolint:staticcheck // ST1005: Claude is a name.
 		return
 	}
 	s.nextID++

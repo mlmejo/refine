@@ -312,8 +312,8 @@ func TestMoveToSprintNeedsATicketInASprint(t *testing.T) {
 
 func TestSplitCopiesTheParentAndFindsTheSprint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/rest/api/3/issue/GEEK-1":
+		switch r.URL.Path {
+		case "/rest/api/3/issue/GEEK-1":
 			w.Write([]byte(`{"key":"GEEK-1","fields":{
 				"summary":"Book Management",
 				"project":{"key":"GEEK"},
@@ -322,7 +322,7 @@ func TestSplitCopiesTheParentAndFindsTheSprint(t *testing.T) {
 				"assignee":{"accountId":"abc"},
 				"customfield_10020":[{"id":1493,"boardId":5}]
 			}}`))
-		case r.URL.Path == "/rest/agile/1.0/board/5/sprint":
+		case "/rest/agile/1.0/board/5/sprint":
 			w.Write([]byte(`{"isLast":true,"values":[{"id":1323,"name":"Ready for Sprint - Team John"}]}`))
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL)
