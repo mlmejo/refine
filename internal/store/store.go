@@ -112,25 +112,28 @@ func (s *Store) Load(key string) (refine.Refinement, bool, error) {
 		return refine.Refinement{}, false, err
 	}
 	var r refine.Refinement
-	return r, true, json.Unmarshal([]byte(state), &r)
+	if err := json.Unmarshal([]byte(state), &r); err != nil {
+		return refine.Refinement{}, false, fmt.Errorf("decode refinement %s: %w", key, err)
+	}
+	return r, true, nil
 }
 
 // All returns every refinement, by key.
 func (s *Store) All() ([]refine.Refinement, error) {
-	rows, err := s.db.Query(`SELECT state FROM refinements ORDER BY key`)
+	rows, err := s.db.Query(`SELECT key, state FROM refinements ORDER BY key`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []refine.Refinement
 	for rows.Next() {
-		var state string
-		if err := rows.Scan(&state); err != nil {
+		var key, state string
+		if err := rows.Scan(&key, &state); err != nil {
 			return nil, err
 		}
 		var r refine.Refinement
 		if err := json.Unmarshal([]byte(state), &r); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("decode refinement %s: %w", key, err)
 		}
 		out = append(out, r)
 	}
@@ -160,20 +163,20 @@ func (s *Store) Delete(key string) error {
 
 // Profiles returns every repo's deployment profile, by repo.
 func (s *Store) Profiles() (map[string]refine.Profile, error) {
-	rows, err := s.db.Query(`SELECT profile FROM deploy_profiles`)
+	rows, err := s.db.Query(`SELECT repo, profile FROM deploy_profiles`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := map[string]refine.Profile{}
 	for rows.Next() {
-		var data string
-		if err := rows.Scan(&data); err != nil {
+		var repo, data string
+		if err := rows.Scan(&repo, &data); err != nil {
 			return nil, err
 		}
 		var p refine.Profile
 		if err := json.Unmarshal([]byte(data), &p); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("decode deploy profile %s: %w", repo, err)
 		}
 		out[p.Repo] = p
 	}

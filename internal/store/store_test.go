@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mlmejo/refine/internal/refine"
@@ -106,5 +107,28 @@ func TestUpgradeBacksUpThenDropsTheOldTables(t *testing.T) {
 	defer again.Close()
 	if again.Backup != "" {
 		t.Errorf("backed up twice: %s", again.Backup)
+	}
+}
+
+func TestCorruptRowsNameTheirKey(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "refine.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.db.Exec(`INSERT INTO refinements (key, state, updated) VALUES ('GEEK-7', '{"key":', '');
+		INSERT INTO deploy_profiles (repo, profile, updated) VALUES ('admin', 'nope', '')`); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := s.Load("GEEK-7")
+	if err == nil || ok || got.Key != "" || !strings.Contains(err.Error(), "GEEK-7") {
+		t.Errorf("load = %+v %v %v", got, ok, err)
+	}
+	if all, err := s.All(); err == nil || all != nil || !strings.Contains(err.Error(), "GEEK-7") {
+		t.Errorf("all = %+v %v", all, err)
+	}
+	if profiles, err := s.Profiles(); err == nil || profiles != nil || !strings.Contains(err.Error(), "admin") {
+		t.Errorf("profiles = %+v %v", profiles, err)
 	}
 }

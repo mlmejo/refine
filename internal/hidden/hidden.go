@@ -4,6 +4,7 @@ package hidden
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,7 +25,10 @@ func (s Store) Load() ([]string, error) {
 		return nil, err
 	}
 	var keys []string
-	return keys, json.Unmarshal(data, &keys)
+	if err := json.Unmarshal(data, &keys); err != nil {
+		return nil, fmt.Errorf("decode hidden keys %s: %w", s.Path, err)
+	}
+	return keys, nil
 }
 
 // Save replaces the hidden keys.
