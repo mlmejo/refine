@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -31,7 +30,7 @@ func (f fakeJira) Tickets(context.Context, string) ([]jira.Ticket, error) {
 func (f fakeJira) GetTicket(_ context.Context, key string) (jira.Ticket, error) {
 	t, ok := f.tickets[key]
 	if !ok {
-		return jira.Ticket{}, errors.New("no " + key)
+		return jira.Ticket{}, &jira.APIError{StatusCode: http.StatusNotFound, Messages: []string{"no " + key}}
 	}
 	return t, nil
 }
@@ -180,6 +179,13 @@ func TestSearchJobThenDecideAndContinue(t *testing.T) {
 	call(t, srv, "GET", "/api/tickets", "", &page)
 	if !page.Rows[0].Started || !strings.HasPrefix(page.Rows[0].Step, "Questions") {
 		t.Fatalf("page = %+v", page)
+	}
+}
+
+func TestOpenAMissingTicketIsNotFound(t *testing.T) {
+	srv, _ := setup(t)
+	if code := call(t, srv, "GET", "/api/tickets/GEEK-999", "", nil); code != http.StatusNotFound {
+		t.Fatalf("code = %d", code)
 	}
 }
 

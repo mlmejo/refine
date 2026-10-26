@@ -3,6 +3,7 @@ package jira
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -245,6 +246,42 @@ func TestUpdateReportsJiraErrors(t *testing.T) {
 	err := New(server.URL, "me", "t").Update(context.Background(), "GEEK-1", Refinement{})
 	if err == nil || !strings.Contains(err.Error(), "cannot be set") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestJiraErrorsCarryTheStatusAndSortedMessages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"errorMessages":["Issue does not exist"],"errors":{"b":"second","a":"first","c":"third"}}`))
+	}))
+	defer server.Close()
+
+	_, err := New(server.URL, "me", "t").GetTicket(context.Background(), "GEEK-1")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("err = %v, want an *APIError", err)
+	}
+	if apiErr.StatusCode != http.StatusNotFound {
+		t.Errorf("StatusCode = %d", apiErr.StatusCode)
+	}
+	want := []string{"Issue does not exist", "first", "second", "third"}
+	if !slices.Equal(apiErr.Messages, want) {
+		t.Errorf("Messages = %q, want %q", apiErr.Messages, want)
+	}
+	if got := err.Error(); got != "jira: 404 Not Found: Issue does not exist; first; second; third" {
+		t.Errorf("Error() = %q", got)
+	}
+}
+
+func TestJiraErrorsWithoutMessagesGiveTheStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	_, err := New(server.URL, "me", "t").Myself(context.Background())
+	if got := fmt.Sprint(err); got != "jira: 401 Unauthorized" {
+		t.Errorf("err = %q", got)
 	}
 }
 

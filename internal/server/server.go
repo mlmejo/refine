@@ -215,6 +215,11 @@ func (s *Server) setHidden(key string, hide bool) error {
 func (s *Server) open(w http.ResponseWriter, r *http.Request) {
 	view, err := s.Service.Open(r.Context(), r.PathValue("key"))
 	if err != nil {
+		var apiErr *jira.APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			fail(w, http.StatusNotFound, err)
+			return
+		}
 		fail(w, http.StatusBadGateway, err)
 		return
 	}
