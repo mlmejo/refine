@@ -88,7 +88,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tickets/{key}", s.open)
 	mux.HandleFunc("DELETE /api/tickets/{key}", s.reset)
 	mux.HandleFunc("PUT /api/tickets/{key}/decisions", s.decide)
-	mux.HandleFunc("POST /api/tickets/{key}/continue", s.continue_)
+	mux.HandleFunc("POST /api/tickets/{key}/continue", s.advance)
 	mux.HandleFunc("PUT /api/tickets/{key}/repos", s.setRepos)
 	mux.HandleFunc("POST /api/tickets/{key}/suggestion", s.suggest)
 	mux.HandleFunc("DELETE /api/tickets/{key}/sync", s.chooseRepos)
@@ -268,7 +268,7 @@ func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
 	s.describe(r.Context(), w, key, err)
 }
 
-func (s *Server) continue_(w http.ResponseWriter, r *http.Request) {
+func (s *Server) advance(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	_, err := s.Service.Continue(r.Context(), key)
 	s.describe(r.Context(), w, key, err)

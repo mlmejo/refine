@@ -23,7 +23,7 @@ type Jira interface {
 	Myself(ctx context.Context) (string, error)
 	Linked(ctx context.Context, jql string) ([]jira.Ticket, error)
 	Tickets(ctx context.Context, jql string) ([]jira.Ticket, error)
-	GetTicket(ctx context.Context, key string) (jira.Ticket, error)
+	Ticket(ctx context.Context, key string) (jira.Ticket, error)
 	Update(ctx context.Context, key string, r jira.Refinement) error
 	Comment(ctx context.Context, key, body string) error
 	Split(ctx context.Context, parent, sprint string) (jira.SplitTarget, error)
@@ -228,7 +228,7 @@ type TicketInfo struct {
 // Open reads a ticket and its refinement. A ticket waiting on blockers has
 // them checked in Jira again, since they may have been refined since.
 func (s *Service) Open(ctx context.Context, key string) (View, error) {
-	t, err := s.Jira.GetTicket(ctx, key)
+	t, err := s.Jira.Ticket(ctx, key)
 	if err != nil {
 		return View{}, err
 	}
@@ -343,7 +343,7 @@ func (s *Service) save(ctx context.Context, key, summary string, create bool, ch
 // on or overlaps. An explanation from the developer goes to Claude with the
 // earlier ones. Decisions on blockers found again are kept.
 func (s *Service) Search(ctx context.Context, key, explanation string, progress func(claude.Activity)) (Refinement, error) {
-	t, err := s.Jira.GetTicket(ctx, key)
+	t, err := s.Jira.Ticket(ctx, key)
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -477,7 +477,7 @@ func (s *Service) check(ctx context.Context, key string) (Refinement, error) {
 	}
 	var waiting []string
 	for _, b := range r.Related.Accepted() {
-		t, err := s.Jira.GetTicket(ctx, b.Key)
+		t, err := s.Jira.Ticket(ctx, b.Key)
 		if err != nil {
 			return Refinement{}, fmt.Errorf("read blocker %s: %w", b.Key, err)
 		}
@@ -532,7 +532,7 @@ func (s *Service) Suggest(ctx context.Context, key string) (Refinement, error) {
 	suggestion := Suggestion{Repos: []SuggestedRepo{}}
 	var cost float64
 	if len(repos) > 0 {
-		t, err := s.Jira.GetTicket(ctx, key)
+		t, err := s.Jira.Ticket(ctx, key)
 		if err != nil {
 			return Refinement{}, err
 		}
@@ -653,7 +653,7 @@ func (s *Service) checkout(ctx context.Context, r Refinement) (map[string]string
 func (s *Service) blockers(ctx context.Context, r Refinement) ([]jira.Ticket, error) {
 	var out []jira.Ticket
 	for _, b := range r.Related.Accepted() {
-		t, err := s.Jira.GetTicket(ctx, b.Key)
+		t, err := s.Jira.Ticket(ctx, b.Key)
 		if err != nil {
 			return nil, fmt.Errorf("read blocker %s: %w", b.Key, err)
 		}
@@ -691,7 +691,7 @@ func (s *Service) Ask(ctx context.Context, key string, progress func(claude.Acti
 	}
 	call := claude.Call{Rules: questionsRules, Schema: questionsSchema, Repos: dirs}
 	if len(r.Rounds) == 0 || r.QuestionSession == "" {
-		t, err := s.Jira.GetTicket(ctx, key)
+		t, err := s.Jira.Ticket(ctx, key)
 		if err != nil {
 			return Refinement{}, err
 		}
@@ -766,7 +766,7 @@ func (s *Service) found(ctx context.Context, key string, r Refinement, reported 
 			slices.ContainsFunc(out, func(x Blocker) bool { return x.Key == b.Key }) {
 			continue
 		}
-		t, err := s.Jira.GetTicket(ctx, b.Key)
+		t, err := s.Jira.Ticket(ctx, b.Key)
 		if err != nil {
 			continue
 		}
@@ -826,7 +826,7 @@ func (s *Service) AskDeploy(ctx context.Context, key string, progress func(claud
 	if !ok || r.Step != StepDeploy {
 		return Refinement{}, fmt.Errorf("deployment: %w", ErrStep)
 	}
-	t, err := s.Jira.GetTicket(ctx, key)
+	t, err := s.Jira.Ticket(ctx, key)
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -913,7 +913,7 @@ func (s *Service) Generate(ctx context.Context, key string, progress func(claude
 			return Refinement{}, err
 		}
 	}
-	t, err := s.Jira.GetTicket(ctx, key)
+	t, err := s.Jira.Ticket(ctx, key)
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -1014,7 +1014,7 @@ func (s *Service) Rewrite(ctx context.Context, key string, progress func(claude.
 	if !ok || r.Step != StepResults || r.Result == nil || len(r.Stamp.Done) > 0 {
 		return Refinement{}, fmt.Errorf("rewrite: %w", ErrStep)
 	}
-	t, err := s.Jira.GetTicket(ctx, key)
+	t, err := s.Jira.Ticket(ctx, key)
 	if err != nil {
 		return Refinement{}, err
 	}

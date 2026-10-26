@@ -236,8 +236,8 @@ func (c *Client) search(ctx context.Context, jql string, extra ...string) ([]Tic
 	return tickets, nil
 }
 
-// GetTicket reads one ticket with its description, points and comments.
-func (c *Client) GetTicket(ctx context.Context, key string) (Ticket, error) {
+// Ticket reads one ticket with its description, points and comments.
+func (c *Client) Ticket(ctx context.Context, key string) (Ticket, error) {
 	fields := strings.Join([]string{
 		"summary", "status", "description", "labels", "comment", "issuelinks", "parent", FieldStoryPoints,
 		FieldAcceptanceCriteria, FieldTechnicalImplementation, FieldStoryPointCriteria,
@@ -369,7 +369,7 @@ func (c *Client) Update(ctx context.Context, key string, r Refinement) error {
 // Relate links two tickets with a Relates link, unless they are linked
 // already.
 func (c *Client) Relate(ctx context.Context, from, to string) error {
-	ticket, err := c.GetTicket(ctx, from)
+	ticket, err := c.Ticket(ctx, from)
 	if err != nil {
 		return err
 	}

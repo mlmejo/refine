@@ -115,7 +115,7 @@ func (st *stamper) act(ctx context.Context, a Action) (string, error) {
 		return "", s.Jira.Update(ctx, r.Key, fields(res.AcceptanceCriteria, res.TechnicalImplementation, res.Decisions, res.Ratings, res.Points))
 	case ActionComment:
 		body := DeployComment(res.DeployNeeds)
-		t, err := s.Jira.GetTicket(ctx, r.Key)
+		t, err := s.Jira.Ticket(ctx, r.Key)
 		if err != nil || t.HasComment(body) {
 			return "", err
 		}
