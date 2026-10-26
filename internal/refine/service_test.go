@@ -757,3 +757,15 @@ func TestSuggestOnlyAtTheReposStep(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestClaudeQuestionDecodesAndConverts(t *testing.T) {
+	var q claudeQuestion
+	if err := json.Unmarshal([]byte(`{"question":"Which store?","options":["Redis","Postgres"],"recommended":1,"why":"Already deployed"}`), &q); err != nil {
+		t.Fatal(err)
+	}
+	got := q.toQuestion()
+	want := Question{Text: "Which store?", Options: []string{"Redis", "Postgres"}, Recommended: 1, Why: "Already deployed"}
+	if got.Text != want.Text || !slices.Equal(got.Options, want.Options) || got.Recommended != want.Recommended || got.Why != want.Why {
+		t.Errorf("toQuestion = %+v, want %+v", got, want)
+	}
+}

@@ -351,8 +351,15 @@ func (s *Service) Search(ctx context.Context, key, explanation string, progress 
 	}
 
 	var out struct {
-		Blockers []struct{ Key, Reason, Quote string } `json:"blockers"`
-		Overlaps []struct{ Key, Reason string }        `json:"overlaps"`
+		Blockers []struct {
+			Key    string `json:"key"`
+			Reason string `json:"reason"`
+			Quote  string `json:"quote"`
+		} `json:"blockers"`
+		Overlaps []struct {
+			Key    string `json:"key"`
+			Reason string `json:"reason"`
+		} `json:"overlaps"`
 	}
 	run, err := s.Claude.Do(ctx, claude.Call{
 		Prompt: relatedPrompt(t, candidates, explanations),
@@ -686,13 +693,8 @@ func (s *Service) Ask(ctx context.Context, key string, progress func(claude.Acti
 		call.Prompt, call.Session = nextRoundPrompt(r), r.QuestionSession
 	}
 	var out struct {
-		Questions []struct {
-			Question    string   `json:"question"`
-			Options     []string `json:"options"`
-			Recommended int      `json:"recommended"`
-			Why         string   `json:"why"`
-		} `json:"questions"`
-		Blockers []struct{ Key, Reason string } `json:"blockers"`
+		Questions []claudeQuestion  `json:"questions"`
+		Blockers  []reportedBlocker `json:"blockers"`
 	}
 	run, err := s.Claude.Do(ctx, call, &out, progress)
 	if err != nil {
@@ -701,7 +703,7 @@ func (s *Service) Ask(ctx context.Context, key string, progress func(claude.Acti
 	found := s.found(ctx, key, r, out.Blockers)
 	var qs []Question
 	for _, q := range out.Questions {
-		qs = append(qs, Question{Text: q.Question, Options: q.Options, Recommended: q.Recommended, Why: q.Why})
+		qs = append(qs, q.toQuestion())
 	}
 	qs = normalize(qs, MaxQuestions)
 	return s.update(key, func(r *Refinement) error {
@@ -734,10 +736,28 @@ func (s *Service) RestartQuestions(key string) (Refinement, error) {
 	})
 }
 
+// reportedBlocker is a blocker Claude reported while reading the code.
+type reportedBlocker struct {
+	Key    string `json:"key"`
+	Reason string `json:"reason"`
+}
+
+// claudeQuestion is a question as Claude writes it.
+type claudeQuestion struct {
+	Question    string   `json:"question"`
+	Options     []string `json:"options"`
+	Recommended int      `json:"recommended"`
+	Why         string   `json:"why"`
+}
+
+func (q claudeQuestion) toQuestion() Question {
+	return Question{Text: q.Question, Options: q.Options, Recommended: q.Recommended, Why: q.Why}
+}
+
 // found turns the blockers Claude reported while reading the code into
 // blockers for the developer to decide: only other open tickets, and none
 // already decided or proposed.
-func (s *Service) found(ctx context.Context, key string, r Refinement, reported []struct{ Key, Reason string }) []Blocker {
+func (s *Service) found(ctx context.Context, key string, r Refinement, reported []reportedBlocker) []Blocker {
 	var out []Blocker
 	for _, b := range reported {
 		if b.Key == key || slices.ContainsFunc(r.Related.Blockers, func(x Blocker) bool { return x.Key == b.Key }) ||
@@ -821,11 +841,8 @@ func (s *Service) AskDeploy(ctx context.Context, key string, progress func(claud
 		return Refinement{}, err
 	}
 	type question struct {
-		Repo        string   `json:"repo"`
-		Question    string   `json:"question"`
-		Options     []string `json:"options"`
-		Recommended int      `json:"recommended"`
-		Why         string   `json:"why"`
+		Repo string `json:"repo"`
+		claudeQuestion
 	}
 	var out struct {
 		Repo   []question `json:"repo_questions"`
@@ -848,7 +865,7 @@ func (s *Service) AskDeploy(ctx context.Context, key string, progress func(claud
 		var qs []Question
 		for _, q := range out.Repo {
 			if q.Repo == name {
-				qs = append(qs, Question{Text: q.Question, Options: q.Options, Recommended: q.Recommended, Why: q.Why})
+				qs = append(qs, q.toQuestion())
 			}
 		}
 		for _, q := range normalize(qs, MaxRepoQuestions) {
@@ -857,7 +874,7 @@ func (s *Service) AskDeploy(ctx context.Context, key string, progress func(claud
 	}
 	var ticket []Question
 	for _, q := range out.Ticket {
-		ticket = append(ticket, Question{Text: q.Question, Options: q.Options, Recommended: q.Recommended, Why: q.Why})
+		ticket = append(ticket, q.toQuestion())
 	}
 	if qs := normalize(ticket, MaxDeployQuestions); qs != nil {
 		deploy.Ticket = qs
