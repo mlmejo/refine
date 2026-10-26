@@ -389,6 +389,26 @@ func TestRestartQuestionsAsksRoundOneFresh(t *testing.T) {
 	}
 }
 
+func TestChooseReposDropsWhatClaudeReadAndPicksAgain(t *testing.T) {
+	s, _, c, _, _ := setup()
+	c.answers = []any{map[string]any{"questions": []map[string]any{question("Which?", "a", "b")}}}
+	toQuestions(t, s, c)
+	s.Ask(context.Background(), "GEEK-101", nil)
+	r, err := s.ChooseRepos("GEEK-101")
+	if err != nil || r.Step != StepRepos || len(r.Rounds) != 0 || r.QuestionSession != "" || len(r.Synced) != 0 {
+		t.Fatalf("choose repos: %+v %v", r, err)
+	}
+	if !slices.Equal(r.Repos, []string{"dating-backend"}) {
+		t.Fatalf("picked repos should stay: %v", r.Repos)
+	}
+	if r, err = s.SetRepos("GEEK-101", []string{"admin"}); err != nil || !slices.Equal(r.Repos, []string{"admin"}) {
+		t.Fatalf("pick again: %+v %v", r, err)
+	}
+	if _, err := s.ChooseRepos("GEEK-101"); !errors.Is(err, ErrStep) {
+		t.Fatalf("already at repos: %v", err)
+	}
+}
+
 func deployAnswer() map[string]any {
 	return map[string]any{
 		"repo_questions": []map[string]any{

@@ -452,6 +452,26 @@ func (s *Service) SetRepos(key string, repos []string) (Refinement, error) {
 	})
 }
 
+// ChooseRepos goes back to the repos step from a later one, so the developer
+// can pick again. What Claude read from the old repos is dropped: the rounds
+// and their session, the deployment and the result. Decided blockers stay
+// decided. Once stamping has begun the repos are fixed.
+func (s *Service) ChooseRepos(key string) (Refinement, error) {
+	return s.update(key, func(r *Refinement) error {
+		switch r.Step {
+		case StepQuestions, StepDeploy, StepResults:
+		default:
+			return fmt.Errorf("repos: %w", ErrStep)
+		}
+		if len(r.Stamp.Done) > 0 {
+			return fmt.Errorf("repos: %w", ErrStep)
+		}
+		r.Step = StepRepos
+		r.Synced, r.Rounds, r.QuestionSession, r.Deploy, r.Result = nil, nil, "", nil, nil
+		return nil
+	})
+}
+
 // Sync fetches each picked repo from origin. When every fetch works, the
 // refinement moves on to questions; a repo that cannot be fetched blocks it.
 func (s *Service) Sync(ctx context.Context, key string) (Refinement, error) {

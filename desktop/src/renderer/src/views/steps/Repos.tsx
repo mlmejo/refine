@@ -5,7 +5,9 @@ import type { Repo, View } from '../../types'
 import { Icon } from '../Icon'
 
 // Repos picks the repos Claude reads for this ticket, then fetches each from
-// origin. A repo that cannot be fetched blocks the next step.
+// origin. A repo that cannot be fetched blocks the next step. Looked back at
+// from a later step, the repos can be picked again, which drops what Claude
+// read from them.
 export function Repos({ view, readOnly }: { view: View; readOnly: boolean }) {
   const refine = useRefine()
   const r = view.refinement
@@ -15,6 +17,7 @@ export function Repos({ view, readOnly }: { view: View; readOnly: boolean }) {
   const synced = r.synced ?? []
   const [all, setAll] = useState<Repo[]>()
   const [filter, setFilter] = useState('')
+  const [confirming, setConfirming] = useState(false)
   const { setError } = refine
 
   useEffect(() => {
@@ -25,6 +28,9 @@ export function Repos({ view, readOnly }: { view: View; readOnly: boolean }) {
     const next = picked.includes(name) ? picked.filter((n) => n !== name) : [...picked, name]
     void refine.act(key, 'repos', () => api.setRepos(key, next))
   }
+
+  const canChoose = readOnly && ['questions', 'deploy', 'results'].includes(r.step) && !r.stamp.done?.length
+  const chooseAgain = () => void refine.act(key, 'choose', () => api.chooseRepos(key))
 
   const fetchAndAsk = async () => {
     const after = await refine.act(key, 'sync', () => api.sync(key))
@@ -128,6 +134,25 @@ export function Repos({ view, readOnly }: { view: View; readOnly: boolean }) {
           </aside>
         </div>
       </div>
+      {canChoose && (
+        <footer className="footbar">
+          {confirming ? (
+            <>
+              <span className="small">Picking again drops the question rounds, the deployment and the result.</span>
+              <button className="btn" style={{ marginLeft: 'auto' }} disabled={!!refine.pending} onClick={() => setConfirming(false)}>
+                Keep them
+              </button>
+              <button className="btn primary" disabled={!!refine.pending} onClick={chooseAgain}>
+                {refine.pending === 'choose' ? 'Dropping…' : 'Drop and pick again'}
+              </button>
+            </>
+          ) : (
+            <button className="btn" style={{ marginLeft: 'auto' }} disabled={!!refine.pending} onClick={() => setConfirming(true)}>
+              Pick repos again
+            </button>
+          )}
+        </footer>
+      )}
       {!readOnly && (
         <footer className="footbar">
           <span className="muted small">
