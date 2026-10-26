@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -18,6 +19,13 @@ import (
 	"github.com/mlmejo/refine/internal/refine"
 	"github.com/mlmejo/refine/internal/store"
 )
+
+// fakeRepos is a fixed list of repos; it can't change.
+type fakeRepos map[string]string
+
+func (r fakeRepos) List() map[string]string  { return maps.Clone(r) }
+func (fakeRepos) Add(name, dir string) error { return errors.ErrUnsupported }
+func (fakeRepos) Remove(name string) error   { return errors.ErrUnsupported }
 
 type fakeJira struct{ tickets map[string]jira.Ticket }
 
@@ -80,8 +88,8 @@ func setup(t *testing.T) (*Server, chan struct{}) {
 		"GEEK-101": {Issue: jira.Issue{Key: "GEEK-101", Summary: "Refunds"}, DescriptionMarkdown: "Use **Stripe**."},
 	}}
 	svc := &refine.Service{Jira: j, Claude: slowClaude{release: release}, Store: st, Git: noGit{},
-		Sprint: "S", ReadySprint: "R", Repos: func() map[string]string { return map[string]string{"admin": "/r/admin"} }}
-	srv := New(Info{Project: "GEEK"}, svc, Repos{List: func() map[string]string { return map[string]string{"admin": "/r/admin"} }}, nil, nil)
+		Sprint: "S", ReadySprint: "R", Repos: fakeRepos{"admin": "/r/admin"}}
+	srv := New(Info{Project: "GEEK"}, svc, fakeRepos{"admin": "/r/admin"}, nil, nil)
 	t.Cleanup(srv.Close)
 	return srv, release
 }
