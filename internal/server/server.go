@@ -56,6 +56,8 @@ type Server struct {
 	hidden map[string]bool
 	job    *job
 	nextID int
+	// stamping holds the tickets being written to Jira.
+	stamping map[string]bool
 }
 
 // New returns a server with a fresh random token. hidden are the keys
@@ -63,7 +65,7 @@ type Server struct {
 func New(info Info, service *refine.Service, repos Repos, hidden []string, saveHidden func([]string) error) *Server {
 	token := make([]byte, 24)
 	_, _ = rand.Read(token)
-	s := &Server{Info: info, Service: service, Repos: repos, SaveHidden: saveHidden, Token: hex.EncodeToString(token), hidden: map[string]bool{}}
+	s := &Server{Info: info, Service: service, Repos: repos, SaveHidden: saveHidden, Token: hex.EncodeToString(token), hidden: map[string]bool{}, stamping: map[string]bool{}}
 	for _, key := range hidden {
 		s.hidden[key] = true
 	}
@@ -323,15 +325,23 @@ func (s *Server) edit(w http.ResponseWriter, r *http.Request) {
 	s.describe(w, key, err)
 }
 
+// stampTimeout bounds one stamp's Jira writes.
+const stampTimeout = 2 * time.Minute
+
 // stamp writes to Jira. A failed action comes back in the refinement's
 // stamp progress, not as an error, so the app can offer a retry.
 func (s *Server) stamp(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	if s.busy(key) {
+	if !s.claim(key) {
 		fail(w, http.StatusConflict, errors.New("a step is running on this ticket"))
 		return
 	}
-	_, err := s.Service.Stamp(r.Context(), key)
+	defer s.release(key)
+	// The Jira writes must not stop halfway because the app dropped the
+	// request: a create cut off mid-flight may still have made the ticket.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), stampTimeout)
+	defer cancel()
+	_, err := s.Service.Stamp(ctx, key)
 	s.describe(w, key, err)
 }
 
@@ -520,10 +530,32 @@ func (s *Server) Close() {
 	}
 }
 
+// busy reports whether a job or a stamp is running on the ticket.
 func (s *Server) busy(key string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.job != nil && !s.job.Done && s.job.Key == key
+	return s.busyLocked(key)
+}
+
+func (s *Server) busyLocked(key string) bool {
+	return s.stamping[key] || s.job != nil && !s.job.Done && s.job.Key == key
+}
+
+// claim marks the ticket as stamping, unless something runs on it already.
+func (s *Server) claim(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.busyLocked(key) {
+		return false
+	}
+	s.stamping[key] = true
+	return true
+}
+
+func (s *Server) release(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.stamping, key)
 }
 
 // currentJob replies with the running job, or the last one until the app
@@ -597,6 +629,11 @@ func (s *Server) startJob(w http.ResponseWriter, r *http.Request) {
 		running := *s.job
 		s.mu.Unlock()
 		fail(w, http.StatusConflict, fmt.Errorf("Claude is already working on %s", running.Key))
+		return
+	}
+	if s.stamping[body.Key] {
+		s.mu.Unlock()
+		fail(w, http.StatusConflict, fmt.Errorf("%s is being stamped", body.Key))
 		return
 	}
 	s.nextID++
