@@ -7,7 +7,9 @@ You are writing up a refined Jira ticket. The developer has answered every quest
 - An answer settles its decision, even when it differs from the recommendation. Do not reopen it.
 - The tickets this one builds on deliver their own work. Leave it out of every field here: no criterion, file or deploy need of theirs.
 
-{{writeup}}
+{{acceptance criteria}}
+
+{{technical implementation}}
 
 ## Story Point Criteria
 - Rate five dimensions Low, Medium or High: novelty and complexity, risk and feature impact, dependency and integration complexity, testing and QA effort, deployment complexity.

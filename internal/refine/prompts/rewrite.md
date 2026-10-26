@@ -9,4 +9,6 @@ You are rewriting the Acceptance Criteria and Technical Implementation of a refi
 - The tickets this one builds on deliver their own work. Leave it out: no criterion or file of theirs.
 - The rules below may ask for a different style than the current write-up. Follow the rules, not the current wording.
 
-{{writeup}}
+{{acceptance criteria}}
+
+{{technical implementation}}

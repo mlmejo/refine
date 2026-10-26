@@ -52,11 +52,23 @@ var rewriteText string
 //go:embed prompts/rewrite.schema.json
 var rewriteSchema string
 
-// DefaultWriteup is how Acceptance Criteria and Technical Implementation are
-// written until the developer uploads their own rules.
-//
-//go:embed prompts/writeup.md
-var DefaultWriteup string
+//go:embed prompts/ac.md
+var defaultAC string
+
+//go:embed prompts/ti.md
+var defaultTI string
+
+// Format names a field whose rules the developer can upload.
+type Format string
+
+const (
+	FormatAC Format = "ac"
+	FormatTI Format = "ti"
+)
+
+// DefaultFormats is how each field is written until the developer uploads
+// their own rules.
+var DefaultFormats = map[Format]string{FormatAC: defaultAC, FormatTI: defaultTI}
 
 var (
 	questionsRules = withShared(questionsText)
@@ -70,16 +82,18 @@ func withShared(rules string) string {
 }
 
 // withWriteup puts the rules for Acceptance Criteria and Technical
-// Implementation in place of their marker.
-func withWriteup(rules, writeup string) string {
-	return withShared(strings.Replace(rules, "{{writeup}}\n", strings.TrimRight(writeup, "\n")+"\n", 1))
+// Implementation in place of their markers.
+func withWriteup(rules, ac, ti string) string {
+	rules = strings.Replace(rules, "{{acceptance criteria}}\n", strings.TrimRight(ac, "\n")+"\n", 1)
+	rules = strings.Replace(rules, "{{technical implementation}}\n", strings.TrimRight(ti, "\n")+"\n", 1)
+	return withShared(rules)
 }
 
 // PromptsVersion fingerprints every rule and schema Claude is given, so a
 // refinement can be traced to the prompts that made it.
 func PromptsVersion() string {
 	h := sha256.New()
-	for _, part := range []string{relatedRules, relatedSchema, suggestRules, suggestSchema, questionsRules, questionsSchema, deployRules, deploySchema, generateText, generateSchema, rewriteText, rewriteSchema, DefaultWriteup} {
+	for _, part := range []string{relatedRules, relatedSchema, suggestRules, suggestSchema, questionsRules, questionsSchema, deployRules, deploySchema, generateText, generateSchema, rewriteText, rewriteSchema, defaultAC, defaultTI} {
 		h.Write([]byte(part))
 		h.Write([]byte{0})
 	}

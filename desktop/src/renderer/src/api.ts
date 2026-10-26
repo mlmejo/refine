@@ -1,4 +1,4 @@
-import type { Answers, Found, Info, Job, JobKind, Page, QA, Repo, Result, View, Writeup } from './types'
+import type { Answers, Found, Info, Job, JobKind, Page, QA, Repo, Result, View, Format, FormatField } from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -54,7 +54,7 @@ export const api = {
   setProfile: (repo: string, answers: QA[]) =>
     call<Repo[]>('PUT', `/api/profiles/${encodeURIComponent(repo)}`, { answers }),
 
-  writeup: () => call<Writeup>('GET', '/api/writeup'),
-  uploadWriteup: (text: string) => call<Writeup>('PUT', '/api/writeup', { text }),
-  resetWriteup: () => call<Writeup>('DELETE', '/api/writeup')
+  format: (field: FormatField) => call<Format>('GET', `/api/formats/${field}`),
+  uploadFormat: (field: FormatField, text: string) => call<Format>('PUT', `/api/formats/${field}`, { text }),
+  resetFormat: (field: FormatField) => call<Format>('DELETE', `/api/formats/${field}`)
 }

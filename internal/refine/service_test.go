@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -501,12 +500,12 @@ func TestEditKeepsPointsInStepWithTheRatings(t *testing.T) {
 
 func TestRewriteReplacesOnlyTheCriteriaAndFiles(t *testing.T) {
 	s, _, c, _, _ := setup()
-	s.WriteupPath = filepath.Join(t.TempDir(), "writeup.md")
+	s.FormatDir = t.TempDir()
 	r := toResults(t, s, c)
-	if !strings.Contains(c.calls[len(c.calls)-1].Rules, "## Acceptance Criteria") {
-		t.Fatal("generate rules lack the default write-up rules")
+	if rules := c.calls[len(c.calls)-1].Rules; !strings.Contains(rules, "## Acceptance Criteria") || !strings.Contains(rules, "## Technical Implementation") {
+		t.Fatal("generate rules lack the default formats")
 	}
-	if err := s.SetWriteup("## Acceptance Criteria\nGiven/When/Then, one per line.\n"); err != nil {
+	if err := s.SetFormat(FormatAC, "## Acceptance Criteria\nGiven/When/Then, one per line.\n"); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
@@ -525,7 +524,7 @@ func TestRewriteReplacesOnlyTheCriteriaAndFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := c.calls[len(c.calls)-1]
-	if !strings.Contains(call.Rules, "Given/When/Then, one per line.") || !strings.Contains(call.Prompt, "Support can refund a payment.") || !strings.Contains(call.Prompt, `"Refunds - Status"`) {
+	if !strings.Contains(call.Rules, "Given/When/Then, one per line.") || !strings.Contains(call.Rules, "## Technical Implementation") || !strings.Contains(call.Prompt, "Support can refund a payment.") || !strings.Contains(call.Prompt, `"Refunds - Status"`) {
 		t.Fatalf("rewrite call = %+v", call)
 	}
 	res := after.Result
@@ -534,11 +533,11 @@ func TestRewriteReplacesOnlyTheCriteriaAndFiles(t *testing.T) {
 		res.Ratings != r.Result.Ratings || res.Points != r.Result.Points || !slices.Equal(res.DeployNeeds, r.Result.DeployNeeds) {
 		t.Fatalf("rewritten = %+v", res)
 	}
-	if err := s.SetWriteup(""); err != nil {
+	if err := s.SetFormat(FormatAC, ""); err != nil {
 		t.Fatal(err)
 	}
-	if text, _ := s.Writeup(); text != DefaultWriteup {
-		t.Fatalf("reset write-up = %q", text)
+	if text, _ := s.Format(FormatAC); text != DefaultFormats[FormatAC] {
+		t.Fatalf("reset format = %q", text)
 	}
 }
 

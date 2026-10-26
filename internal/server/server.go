@@ -100,9 +100,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/repos/scan", s.scan)
 	mux.HandleFunc("GET /api/folders", s.folders)
 	mux.HandleFunc("PUT /api/profiles/{repo}", s.setProfile)
-	mux.HandleFunc("GET /api/writeup", s.writeup)
-	mux.HandleFunc("PUT /api/writeup", s.setWriteup)
-	mux.HandleFunc("DELETE /api/writeup", s.setWriteup)
+	mux.HandleFunc("GET /api/formats/{format}", s.format)
+	mux.HandleFunc("PUT /api/formats/{format}", s.setFormat)
+	mux.HandleFunc("DELETE /api/formats/{format}", s.setFormat)
 	mux.HandleFunc("GET /api/job", s.currentJob)
 	mux.HandleFunc("POST /api/jobs", s.startJob)
 	mux.HandleFunc("DELETE /api/jobs/{id}", s.cancelJob)
@@ -443,19 +443,30 @@ func (s *Server) setProfile(w http.ResponseWriter, r *http.Request) {
 	s.repos(w, r)
 }
 
-// writeup replies with where the write-up rules live and whether they are
-// the developer's own.
-func (s *Server) writeup(w http.ResponseWriter, r *http.Request) {
-	text, err := s.Service.Writeup()
+// format replies with where a field's rules live and whether they are the
+// developer's own.
+func (s *Server) format(w http.ResponseWriter, r *http.Request) {
+	f := refine.Format(r.PathValue("format"))
+	def, ok := refine.DefaultFormats[f]
+	if !ok {
+		fail(w, http.StatusNotFound, fmt.Errorf("no format %q", f))
+		return
+	}
+	text, err := s.Service.Format(f)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
-	reply(w, map[string]any{"path": s.Service.WriteupPath, "custom": strings.TrimSpace(text) != strings.TrimSpace(refine.DefaultWriteup)})
+	reply(w, map[string]any{"path": s.Service.FormatPath(f), "custom": strings.TrimSpace(text) != strings.TrimSpace(def)})
 }
 
-// setWriteup takes uploaded write-up rules, or puts the defaults back.
-func (s *Server) setWriteup(w http.ResponseWriter, r *http.Request) {
+// setFormat takes a field's uploaded rules, or puts the defaults back.
+func (s *Server) setFormat(w http.ResponseWriter, r *http.Request) {
+	f := refine.Format(r.PathValue("format"))
+	if _, ok := refine.DefaultFormats[f]; !ok {
+		fail(w, http.StatusNotFound, fmt.Errorf("no format %q", f))
+		return
+	}
 	var body struct {
 		Text string `json:"text"`
 	}
@@ -468,11 +479,11 @@ func (s *Server) setWriteup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.Service.SetWriteup(body.Text); err != nil {
+	if err := s.Service.SetFormat(f, body.Text); err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.writeup(w, r)
+	s.format(w, r)
 }
 
 // A job is one Claude run. Runs take minutes, so the app starts one and

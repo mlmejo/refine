@@ -143,9 +143,13 @@ export type Activity = { verb: string; what: string; at: string }
 
 export type JobKind = 'search' | 'ask' | 'deploy' | 'generate' | 'rewrite'
 
-// Writeup is where the rules for Acceptance Criteria and Technical
-// Implementation live, and whether they are the developer's own.
-export type Writeup = { path: string; custom: boolean }
+// FormatField names a field whose rules the developer can upload:
+// Acceptance Criteria or Technical Implementation.
+export type FormatField = 'ac' | 'ti'
+
+// Format is where a field's rules live, and whether they are the
+// developer's own.
+export type Format = { path: string; custom: boolean }
 
 export type Job = {
   id: string

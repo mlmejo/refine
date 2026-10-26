@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../../api'
 import { useRefine } from '../../store'
-import type { Rating, Ratings, RepoFiles, Result, View, Writeup } from '../../types'
+import type { Format, FormatField, Rating, Ratings, RepoFiles, Result, View } from '../../types'
 import { StampDialog } from './StampDialog'
 
 const rows: { key: keyof Ratings; label: string }[] = [
@@ -71,6 +71,54 @@ function Lines({ lines, readOnly, onChange, placeholder }: { lines: string[]; re
   )
 }
 
+// FormatPicker says which rules a field is written with, and takes an
+// uploaded .md file of the developer's own.
+function FormatPicker({ field }: { field: FormatField }) {
+  const refine = useRefine()
+  const [format, setFormat] = useState<Format>()
+  const upload = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    void api.format(field).then(setFormat, () => undefined)
+  }, [field])
+
+  const change = async (next: () => Promise<Format>, done: string) => {
+    try {
+      setFormat(await next())
+      refine.flash({ text: done })
+    } catch (err) {
+      refine.flash({ text: (err as Error).message, error: true })
+    }
+  }
+
+  return (
+    <div className="row small" style={{ gap: 8, marginBottom: 8 }}>
+      <span className="muted" title={format?.path}>
+        Written with {format?.custom ? 'your format file' : 'the default format'}.
+      </span>
+      <button className="link" onClick={() => upload.current?.click()}>
+        Upload a format (.md)
+      </button>
+      {format?.custom && (
+        <button className="link" onClick={() => void change(() => api.resetFormat(field), 'The default format is back')}>
+          Use the default
+        </button>
+      )}
+      <input
+        ref={upload}
+        type="file"
+        accept=".md,.markdown,text/markdown,text/plain"
+        hidden
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          e.target.value = ''
+          if (file) void change(async () => api.uploadFormat(field, await file.text()), `Uploaded ${file.name}; regenerate to use it`)
+        }}
+      />
+    </div>
+  )
+}
+
 // Results shows what will be written to Jira. Everything on the original is
 // editable in place, and the split tickets' titles; the points follow the
 // ratings.
@@ -82,22 +130,7 @@ export function Results({ view, readOnly }: { view: View; readOnly: boolean }) {
   const [result, setResult] = useState<Result>(() => r.result!)
   const [saved, setSaved] = useState(true)
   const [stamping, setStamping] = useState(!!r.stamp.error)
-  const [writeup, setWriteup] = useState<Writeup>()
   const timer = useRef<number>(undefined)
-  const upload = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    void api.writeup().then(setWriteup, () => undefined)
-  }, [])
-
-  const changeWriteup = async (change: () => Promise<Writeup>, done: string) => {
-    try {
-      setWriteup(await change())
-      refine.flash({ text: done })
-    } catch (err) {
-      refine.flash({ text: (err as Error).message, error: true })
-    }
-  }
 
   const regenerate = async () => {
     await flush()
@@ -191,32 +224,7 @@ export function Results({ view, readOnly }: { view: View; readOnly: boolean }) {
                 <h2>Acceptance Criteria</h2>
                 {!locked && <span className="muted small">Click any line to edit. Enter adds a line.</span>}
               </div>
-              {!locked && (
-                <div className="row small" style={{ gap: 8, marginBottom: 8 }}>
-                  <span className="muted" title={writeup?.path}>
-                    Written with {writeup?.custom ? 'your format file' : 'the default format'}.
-                  </span>
-                  <button className="link" onClick={() => upload.current?.click()}>
-                    Upload a format (.md)
-                  </button>
-                  {writeup?.custom && (
-                    <button className="link" onClick={() => void changeWriteup(api.resetWriteup, 'The default format is back')}>
-                      Use the default
-                    </button>
-                  )}
-                  <input
-                    ref={upload}
-                    type="file"
-                    accept=".md,.markdown,text/markdown,text/plain"
-                    hidden
-                    onChange={(e) => {
-                      const file = e.target.files?.[0]
-                      e.target.value = ''
-                      if (file) void changeWriteup(async () => api.uploadWriteup(await file.text()), `Uploaded ${file.name}; regenerate to use it`)
-                    }}
-                  />
-                </div>
-              )}
+              {!locked && <FormatPicker field="ac" />}
               <Lines
                 lines={result.acceptance_criteria ?? []}
                 readOnly={locked}
@@ -230,6 +238,7 @@ export function Results({ view, readOnly }: { view: View; readOnly: boolean }) {
                 <h2>Technical Implementation</h2>
                 {!locked && <span className="muted small">One path per line; mark new files with (new).</span>}
               </div>
+              {!locked && <FormatPicker field="ti" />}
               <div className="files">
                 {repos.map((repo, i) => (
                   <div key={repo.repo + i} className="stack" style={{ gap: 2 }}>

@@ -70,9 +70,10 @@ type Service struct {
 	Worktrees string
 	// Hidden reports tickets the developer hid from the list.
 	Hidden func(key string) bool
-	// WriteupPath is the markdown file of rules for Acceptance Criteria and
-	// Technical Implementation. Empty, or a missing file, means the defaults.
-	WriteupPath string
+	// FormatDir holds the markdown files of rules for Acceptance Criteria
+	// (ac.md) and Technical Implementation (ti.md). Empty, or a missing file,
+	// means the defaults.
+	FormatDir string
 
 	// mu keeps a refinement's read-change-save from racing another.
 	mu sync.Mutex
@@ -902,7 +903,11 @@ func (s *Service) Generate(ctx context.Context, key string, progress func(claude
 	if err != nil {
 		return Refinement{}, err
 	}
-	writeup, err := s.Writeup()
+	ac, err := s.Format(FormatAC)
+	if err != nil {
+		return Refinement{}, err
+	}
+	ti, err := s.Format(FormatTI)
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -913,7 +918,7 @@ func (s *Service) Generate(ctx context.Context, key string, progress func(claude
 	var result Result
 	run, err := s.Claude.Do(ctx, claude.Call{
 		Prompt: generatePrompt(t, blockers, r, dirs, profiles),
-		Rules:  withWriteup(generateText, writeup),
+		Rules:  withWriteup(generateText, ac, ti),
 		Schema: generateSchema,
 		Repos:  dirs,
 	}, &result, progress)
@@ -929,32 +934,51 @@ func (s *Service) Generate(ctx context.Context, key string, progress func(claude
 	})
 }
 
-// Writeup reads the rules for Acceptance Criteria and Technical
-// Implementation: the developer's file, or the defaults when there is none.
-func (s *Service) Writeup() (string, error) {
-	if s.WriteupPath == "" {
-		return DefaultWriteup, nil
+// FormatPath is the file of the developer's rules for a field, or empty
+// when there is no folder for them.
+func (s *Service) FormatPath(f Format) string {
+	if s.FormatDir == "" {
+		return ""
 	}
-	data, err := os.ReadFile(s.WriteupPath)
+	return filepath.Join(s.FormatDir, string(f)+".md")
+}
+
+// Format reads the rules for a field: the developer's file, or the defaults
+// when there is none.
+func (s *Service) Format(f Format) (string, error) {
+	def, ok := DefaultFormats[f]
+	if !ok {
+		return "", fmt.Errorf("no format %q", f)
+	}
+	path := s.FormatPath(f)
+	if path == "" {
+		return def, nil
+	}
+	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) || (err == nil && strings.TrimSpace(string(data)) == "") {
-		return DefaultWriteup, nil
+		return def, nil
 	}
 	return string(data), err
 }
 
-// SetWriteup replaces the rules for Acceptance Criteria and Technical
-// Implementation; empty text puts the defaults back.
-func (s *Service) SetWriteup(text string) error {
-	if s.WriteupPath == "" {
-		return errors.New("no file for the write-up rules")
+// SetFormat replaces the rules for a field; empty text puts the defaults
+// back.
+func (s *Service) SetFormat(f Format, text string) error {
+	def, ok := DefaultFormats[f]
+	if !ok {
+		return fmt.Errorf("no format %q", f)
+	}
+	path := s.FormatPath(f)
+	if path == "" {
+		return errors.New("no folder for the format files")
 	}
 	if strings.TrimSpace(text) == "" {
-		text = DefaultWriteup
+		text = def
 	}
-	if err := os.MkdirAll(filepath.Dir(s.WriteupPath), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(s.WriteupPath, []byte(text), 0o600)
+	return os.WriteFile(path, []byte(text), 0o600)
 }
 
 // Rewrite asks Claude for the Acceptance Criteria and Technical
@@ -976,7 +1000,11 @@ func (s *Service) Rewrite(ctx context.Context, key string, progress func(claude.
 	if err != nil {
 		return Refinement{}, err
 	}
-	writeup, err := s.Writeup()
+	ac, err := s.Format(FormatAC)
+	if err != nil {
+		return Refinement{}, err
+	}
+	ti, err := s.Format(FormatTI)
 	if err != nil {
 		return Refinement{}, err
 	}
@@ -994,7 +1022,7 @@ func (s *Service) Rewrite(ctx context.Context, key string, progress func(claude.
 	}
 	run, err := s.Claude.Do(ctx, claude.Call{
 		Prompt: rewritePrompt(t, blockers, r, dirs, *r.Result),
-		Rules:  withWriteup(rewriteText, writeup),
+		Rules:  withWriteup(rewriteText, ac, ti),
 		Schema: rewriteSchema,
 		Repos:  dirs,
 	}, &rewritten, progress)

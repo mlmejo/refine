@@ -112,11 +112,13 @@ func Open() (*App, error) {
 		ReadySprint: cfg.Jira.ReadySprint,
 		Repos:       repos.List,
 		Worktrees:   filepath.Join(state, "worktrees"),
-		WriteupPath: filepath.Join(filepath.Dir(path), "writeup.md"),
+		FormatDir:   filepath.Dir(path),
 	}
-	if _, err := os.Stat(service.WriteupPath); errors.Is(err, fs.ErrNotExist) {
-		if err := service.SetWriteup(""); err != nil {
-			return nil, err
+	for _, f := range []refine.Format{refine.FormatAC, refine.FormatTI} {
+		if _, err := os.Stat(service.FormatPath(f)); errors.Is(err, fs.ErrNotExist) {
+			if err := service.SetFormat(f, ""); err != nil {
+				return nil, err
+			}
 		}
 	}
 	info := server.Info{Site: cfg.Jira.Site, Project: cfg.Jira.Project, Sprint: cfg.Jira.Sprint, ReadySprint: cfg.Jira.ReadySprint}
