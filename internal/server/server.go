@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,9 +59,7 @@ type Server struct {
 // New returns a server with a fresh random token. hidden are the keys
 // already hidden from the list.
 func New(info Info, service *refine.Service, repos Repos, hidden []string, saveHidden func([]string) error) *Server {
-	token := make([]byte, 24)
-	_, _ = rand.Read(token)
-	s := &Server{Info: info, Service: service, Repos: repos, SaveHidden: saveHidden, Token: hex.EncodeToString(token), hidden: map[string]bool{}}
+	s := &Server{Info: info, Service: service, Repos: repos, SaveHidden: saveHidden, Token: rand.Text(), hidden: map[string]bool{}}
 	for _, key := range hidden {
 		s.hidden[key] = true
 	}

@@ -489,7 +489,7 @@ func (s *Service) SetRepos(key string, repos []string) (Refinement, error) {
 		if r.Step != StepRepos {
 			return fmt.Errorf("repos: %w", ErrStep)
 		}
-		r.Repos = slices.Sorted(slices.Values(slices.Compact(slices.Sorted(slices.Values(repos)))))
+		r.Repos = slices.Compact(slices.Sorted(slices.Values(repos)))
 		r.Synced = nil
 		return nil
 	})
