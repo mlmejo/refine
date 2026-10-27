@@ -670,7 +670,8 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, out a
 		return nil
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("decode %s: %w", strings.SplitN(path, "?", 2)[0], err)
+		route, _, _ := strings.Cut(path, "?")
+		return fmt.Errorf("decode %s: %w", route, err)
 	}
 	return nil
 }

@@ -547,7 +547,7 @@ func (s *Service) SetRepos(ctx context.Context, key string, repos []string) (Ref
 		if r.Step != StepRepos {
 			return fmt.Errorf("repos: %w", ErrStep)
 		}
-		r.Repos = slices.Sorted(slices.Values(slices.Compact(slices.Sorted(slices.Values(repos)))))
+		r.Repos = slices.Compact(slices.Sorted(slices.Values(repos)))
 		r.Synced = nil
 		return nil
 	})

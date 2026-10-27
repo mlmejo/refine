@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"sync"
 )
 
@@ -36,8 +35,7 @@ func (s Store) Load() ([]string, error) {
 
 // Save replaces the hidden keys.
 func (s Store) Save(keys []string) error {
-	sorted := append([]string(nil), keys...)
-	sort.Strings(sorted)
+	sorted := slices.Sorted(slices.Values(keys))
 	data, err := json.MarshalIndent(sorted, "", "  ")
 	if err != nil {
 		return err

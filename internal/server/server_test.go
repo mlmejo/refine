@@ -154,7 +154,7 @@ func TestNewLeavesTheServiceAlone(t *testing.T) {
 	if svc.Hidden != nil {
 		t.Fatal("New set the service's Hidden")
 	}
-	if len(srv.Token()) != 48 {
+	if len(srv.Token()) != 26 { // rand.Text length
 		t.Fatalf("token = %q", srv.Token())
 	}
 }

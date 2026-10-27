@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,9 +65,7 @@ type Server struct {
 // New returns a server with a fresh random token. hidden is the set the
 // service reads when it lists tickets.
 func New(info Info, service *refine.Service, repos Repos, hidden Hider) *Server {
-	token := make([]byte, 24)
-	_, _ = rand.Read(token)
-	return &Server{about: info, service: service, config: repos, hidden: hidden, token: hex.EncodeToString(token), stamping: map[string]bool{}}
+	return &Server{about: info, service: service, config: repos, hidden: hidden, token: rand.Text(), stamping: map[string]bool{}}
 }
 
 // Token is what every request sends as "Authorization: Bearer <token>".

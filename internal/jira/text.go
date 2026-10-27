@@ -144,7 +144,7 @@ func mdBlocks(out *strings.Builder, nodes []adfNode, prefix string) {
 		case "blockquote", "panel":
 			var inner strings.Builder
 			mdBlocks(&inner, node.Content, "")
-			for _, line := range strings.Split(strings.TrimSpace(inner.String()), "\n") {
+			for line := range strings.SplitSeq(strings.TrimSpace(inner.String()), "\n") {
 				out.WriteString(strings.TrimRight(prefix+"> "+line, " ") + "\n")
 			}
 			out.WriteString("\n")
