@@ -34,26 +34,32 @@ type File struct {
 func Fields(d Draft) Refinement {
 	var ac strings.Builder
 	for _, item := range d.AcceptanceCriteria {
-		ac.WriteString("* " + item + "\n")
+		ac.WriteString("* ")
+		ac.WriteString(item)
+		ac.WriteByte('\n')
 	}
 	var ti strings.Builder
 	for i, repo := range d.Repos {
 		if i > 0 {
 			ti.WriteString("\n")
 		}
-		ti.WriteString(repo.Repo + "\n\n")
+		ti.WriteString(repo.Repo)
+		ti.WriteString("\n\n")
 		for _, file := range repo.Files {
-			line := "* " + file.Path
+			ti.WriteString("* ")
+			ti.WriteString(file.Path)
 			if file.New {
-				line += " (new)"
+				ti.WriteString(" (new)")
 			}
-			ti.WriteString(line + "\n")
+			ti.WriteByte('\n')
 		}
 	}
 	if len(d.Decisions) > 0 {
 		ti.WriteString("\n---\n\n")
 		for _, decision := range d.Decisions {
-			ti.WriteString("* " + decision + "\n")
+			ti.WriteString("* ")
+			ti.WriteString(decision)
+			ti.WriteByte('\n')
 		}
 	}
 	var spc []string
