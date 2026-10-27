@@ -138,10 +138,10 @@ func ParseKey(input, project string) (string, bool) {
 	return "", false
 }
 
-// ListJQL lists the current user's unresolved tickets in a sprint, most
-// recently updated first.
+// ListJQL lists the current user's To Do tickets in a sprint, most recently
+// updated first.
 func ListJQL(sprint string) string {
-	return fmt.Sprintf(`assignee = currentUser() AND resolution = Unresolved AND sprint = %s ORDER BY updated DESC`, quote(sprint))
+	return fmt.Sprintf(`assignee = currentUser() AND status = "To Do" AND sprint = %s ORDER BY updated DESC`, quote(sprint))
 }
 
 // ReadyJQL lists the current user's unresolved tickets in the ready sprint,

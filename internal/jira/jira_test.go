@@ -55,7 +55,7 @@ func TestTicketsSendsJQLAndDecodesIssues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got.JQL != `assignee = currentUser() AND resolution = Unresolved AND sprint = "Refinement Ready - Team John" ORDER BY updated DESC` {
+	if got.JQL != `assignee = currentUser() AND status = "To Do" AND sprint = "Refinement Ready - Team John" ORDER BY updated DESC` {
 		t.Errorf("jql = %q", got.JQL)
 	}
 	if fields := strings.Join(got.Fields, ","); !strings.Contains(fields, FieldStoryPointCriteria) || !strings.Contains(fields, "description") || !strings.Contains(fields, "issuelinks") {
