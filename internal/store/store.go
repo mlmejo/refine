@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -42,11 +43,13 @@ type Store struct {
 	// Backup is the copy of the database made before an upgrade dropped the
 	// old tables, or "" when there was none.
 	Backup string
+	// Now is the clock; nil means time.Now.
+	Now func() time.Time
 }
 
 // Open opens or creates the database at path. A database from before
 // version 11 is copied next to it first, then its old tables are dropped.
-func Open(path string) (*Store, error) {
+func Open(ctx context.Context, path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
@@ -55,11 +58,19 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db}
-	if err := s.migrate(path); err != nil {
+	if err := s.migrate(ctx, path); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return s, nil
+}
+
+// now reads the store's clock.
+func (s *Store) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
 }
 
 // Close closes the database.
@@ -67,9 +78,9 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func (s *Store) migrate(path string) error {
+func (s *Store) migrate(ctx context.Context, path string) error {
 	var current int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&current); err != nil {
+	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil {
 		return err
 	}
 	if current >= version {
@@ -77,34 +88,34 @@ func (s *Store) migrate(path string) error {
 	}
 	if current > 0 {
 		backup := fmt.Sprintf("%s.bak-%s", path, time.Now().Format("20060102-150405"))
-		if _, err := s.db.Exec(`VACUUM INTO ?`, backup); err != nil {
+		if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, backup); err != nil {
 			return fmt.Errorf("back up %s before upgrading it: %w", path, err)
 		}
 		s.Backup = backup
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	for _, table := range old {
-		if _, err := tx.Exec(`DROP TABLE IF EXISTS ` + table); err != nil {
+		if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS `+table); err != nil {
 			return err
 		}
 	}
-	if _, err := tx.Exec(schema); err != nil {
+	if _, err := tx.ExecContext(ctx, schema); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 // Load returns a ticket's refinement, if it has one.
-func (s *Store) Load(key string) (refine.Refinement, bool, error) {
-	var state string
-	err := s.db.QueryRow(`SELECT state FROM refinements WHERE key = ?`, key).Scan(&state)
+func (s *Store) Load(ctx context.Context, key string) (refine.Refinement, bool, error) {
+	var state []byte
+	err := s.db.QueryRowContext(ctx, `SELECT state FROM refinements WHERE key = ?`, key).Scan(&state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return refine.Refinement{}, false, nil
 	}
@@ -112,27 +123,28 @@ func (s *Store) Load(key string) (refine.Refinement, bool, error) {
 		return refine.Refinement{}, false, err
 	}
 	var r refine.Refinement
-	if err := json.Unmarshal([]byte(state), &r); err != nil {
+	if err := json.Unmarshal(state, &r); err != nil {
 		return refine.Refinement{}, false, fmt.Errorf("decode refinement %s: %w", key, err)
 	}
 	return r, true, nil
 }
 
 // All returns every refinement, by key.
-func (s *Store) All() ([]refine.Refinement, error) {
-	rows, err := s.db.Query(`SELECT key, state FROM refinements ORDER BY key`)
+func (s *Store) All(ctx context.Context) ([]refine.Refinement, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT key, state FROM refinements ORDER BY key`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []refine.Refinement
 	for rows.Next() {
-		var key, state string
+		var key string
+		var state []byte
 		if err := rows.Scan(&key, &state); err != nil {
 			return nil, err
 		}
 		var r refine.Refinement
-		if err := json.Unmarshal([]byte(state), &r); err != nil {
+		if err := json.Unmarshal(state, &r); err != nil {
 			return nil, fmt.Errorf("decode refinement %s: %w", key, err)
 		}
 		out = append(out, r)
@@ -141,29 +153,30 @@ func (s *Store) All() ([]refine.Refinement, error) {
 }
 
 // Save writes a refinement, replacing the ticket's earlier one.
-func (s *Store) Save(r refine.Refinement) error {
+func (s *Store) Save(ctx context.Context, r refine.Refinement) error {
 	if r.Updated.IsZero() {
-		r.Updated = time.Now()
+		r.Updated = s.now()
 	}
 	state, err := json.Marshal(r)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO refinements (key, state, updated) VALUES (?, ?, ?)
+	// Bytes bind as a BLOB; the CAST keeps state stored as TEXT.
+	_, err = s.db.ExecContext(ctx, `INSERT INTO refinements (key, state, updated) VALUES (?, CAST(? AS TEXT), ?)
 		ON CONFLICT (key) DO UPDATE SET state = excluded.state, updated = excluded.updated`,
-		r.Key, string(state), r.Updated.UTC().Format(time.RFC3339Nano))
+		r.Key, state, r.Updated.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
 // Delete forgets a ticket's refinement.
-func (s *Store) Delete(key string) error {
-	_, err := s.db.Exec(`DELETE FROM refinements WHERE key = ?`, key)
+func (s *Store) Delete(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM refinements WHERE key = ?`, key)
 	return err
 }
 
 // Profiles returns every repo's deployment profile, by repo.
-func (s *Store) Profiles() (map[string]refine.Profile, error) {
-	rows, err := s.db.Query(`SELECT repo, profile FROM deploy_profiles`)
+func (s *Store) Profiles(ctx context.Context) (map[string]refine.Profile, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT repo, profile FROM deploy_profiles`)
 	if err != nil {
 		return nil, err
 	}
@@ -185,19 +198,19 @@ func (s *Store) Profiles() (map[string]refine.Profile, error) {
 
 // SaveProfile writes a repo's deployment profile; one with no answers is
 // removed, so the repo is asked about again.
-func (s *Store) SaveProfile(p refine.Profile) error {
+func (s *Store) SaveProfile(ctx context.Context, p refine.Profile) error {
 	if len(p.Answers) == 0 {
-		_, err := s.db.Exec(`DELETE FROM deploy_profiles WHERE repo = ?`, p.Repo)
+		_, err := s.db.ExecContext(ctx, `DELETE FROM deploy_profiles WHERE repo = ?`, p.Repo)
 		return err
 	}
 	if p.Updated.IsZero() {
-		p.Updated = time.Now()
+		p.Updated = s.now()
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO deploy_profiles (repo, profile, updated) VALUES (?, ?, ?)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO deploy_profiles (repo, profile, updated) VALUES (?, ?, ?)
 		ON CONFLICT (repo) DO UPDATE SET profile = excluded.profile, updated = excluded.updated`,
 		p.Repo, string(data), p.Updated.UTC().Format(time.RFC3339Nano))
 	return err

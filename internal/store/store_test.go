@@ -1,60 +1,70 @@
 package store
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mlmejo/refine/internal/refine"
 )
 
+// now is the clock the tests give the store.
+var now = time.Date(2026, 10, 26, 9, 30, 0, 0, time.UTC)
+
 func TestSaveLoadAndDelete(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "refine.db"))
+	ctx := context.Background()
+	s, err := Open(context.Background(), filepath.Join(t.TempDir(), "refine.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	s.Now = func() time.Time { return now }
 	if s.Backup != "" {
 		t.Errorf("a new database was backed up to %s", s.Backup)
 	}
 	r := refine.New("GEEK-1", "Refunds")
 	r.Repos = []string{"admin"}
-	if err := s.Save(r); err != nil {
+	if err := s.Save(ctx, r); err != nil {
 		t.Fatal(err)
 	}
 	r.Step = refine.StepRepos
-	if err := s.Save(r); err != nil {
+	if err := s.Save(ctx, r); err != nil {
 		t.Fatal(err)
 	}
-	got, ok, err := s.Load("GEEK-1")
-	if err != nil || !ok || got.Step != refine.StepRepos || got.Repos[0] != "admin" || got.Updated.IsZero() {
+	got, ok, err := s.Load(ctx, "GEEK-1")
+	if err != nil || !ok || got.Step != refine.StepRepos || got.Repos[0] != "admin" || !got.Updated.Equal(now) {
 		t.Fatalf("load = %+v %v %v", got, ok, err)
 	}
-	all, _ := s.All()
+	all, _ := s.All(ctx)
 	if len(all) != 1 {
 		t.Fatalf("all = %+v", all)
 	}
-	s.Delete("GEEK-1")
-	if _, ok, _ := s.Load("GEEK-1"); ok {
+	s.Delete(ctx, "GEEK-1")
+	if _, ok, _ := s.Load(ctx, "GEEK-1"); ok {
 		t.Fatal("deleted refinement still there")
 	}
 }
 
 func TestProfiles(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "refine.db"))
+	ctx := context.Background()
+	s, err := Open(context.Background(), filepath.Join(t.TempDir(), "refine.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	s.SaveProfile(refine.Profile{Repo: "admin", Answers: []refine.QA{{Question: "How?", Answer: "Forge"}}})
-	got, _ := s.Profiles()
-	if got["admin"].Answers[0].Answer != "Forge" {
+	s.Now = func() time.Time { return now }
+	s.SaveProfile(ctx, refine.Profile{Repo: "admin", Answers: []refine.QA{{Question: "How?", Answer: "Forge"}}})
+	got, _ := s.Profiles(ctx)
+	if got["admin"].Answers[0].Answer != "Forge" || !got["admin"].Updated.Equal(now) {
 		t.Fatalf("profiles = %+v", got)
 	}
-	s.SaveProfile(refine.Profile{Repo: "admin"})
-	if got, _ := s.Profiles(); len(got) != 0 {
+	s.SaveProfile(ctx, refine.Profile{Repo: "admin"})
+	if got, _ := s.Profiles(ctx); len(got) != 0 {
 		t.Fatalf("emptied profile kept: %+v", got)
 	}
 }
@@ -73,7 +83,7 @@ func TestUpgradeBacksUpThenDropsTheOldTables(t *testing.T) {
 	}
 	db.Close()
 
-	s, err := Open(path)
+	s, err := Open(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +110,7 @@ func TestUpgradeBacksUpThenDropsTheOldTables(t *testing.T) {
 
 	// Opening again changes nothing.
 	s.Close()
-	again, err := Open(path)
+	again, err := Open(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,8 +120,58 @@ func TestUpgradeBacksUpThenDropsTheOldTables(t *testing.T) {
 	}
 }
 
+func TestACancelledContextStopsTheQuery(t *testing.T) {
+	s, err := Open(context.Background(), filepath.Join(t.TempDir(), "refine.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := s.Save(ctx, refine.New("GEEK-1", "Refunds")); !errors.Is(err, context.Canceled) {
+		t.Errorf("save = %v", err)
+	}
+	if _, _, err := s.Load(ctx, "GEEK-1"); !errors.Is(err, context.Canceled) {
+		t.Errorf("load = %v", err)
+	}
+	if _, err := s.All(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("all = %v", err)
+	}
+	if err := s.Delete(ctx, "GEEK-1"); !errors.Is(err, context.Canceled) {
+		t.Errorf("delete = %v", err)
+	}
+	if _, err := s.Profiles(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("profiles = %v", err)
+	}
+	if err := s.SaveProfile(ctx, refine.Profile{Repo: "admin", Answers: []refine.QA{{Question: "How?", Answer: "Forge"}}}); !errors.Is(err, context.Canceled) {
+		t.Errorf("save profile = %v", err)
+	}
+	if _, err := Open(ctx, filepath.Join(t.TempDir(), "refine.db")); !errors.Is(err, context.Canceled) {
+		t.Errorf("open = %v", err)
+	}
+}
+
+func TestSaveStoresStateAsText(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "refine.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.Save(ctx, refine.New("GEEK-1", "Refunds")); err != nil {
+		t.Fatal(err)
+	}
+	var kind string
+	if err := s.db.QueryRowContext(ctx, `SELECT typeof(state) FROM refinements WHERE key = 'GEEK-1'`).Scan(&kind); err != nil {
+		t.Fatal(err)
+	}
+	if kind != "text" {
+		t.Fatalf("state stored as %s, want text", kind)
+	}
+}
+
 func TestCorruptRowsNameTheirKey(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "refine.db"))
+	s, err := Open(context.Background(), filepath.Join(t.TempDir(), "refine.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,14 +181,14 @@ func TestCorruptRowsNameTheirKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, ok, err := s.Load("GEEK-7")
+	got, ok, err := s.Load(context.Background(), "GEEK-7")
 	if err == nil || ok || got.Key != "" || !strings.Contains(err.Error(), "GEEK-7") {
 		t.Errorf("load = %+v %v %v", got, ok, err)
 	}
-	if all, err := s.All(); err == nil || all != nil || !strings.Contains(err.Error(), "GEEK-7") {
+	if all, err := s.All(context.Background()); err == nil || all != nil || !strings.Contains(err.Error(), "GEEK-7") {
 		t.Errorf("all = %+v %v", all, err)
 	}
-	if profiles, err := s.Profiles(); err == nil || profiles != nil || !strings.Contains(err.Error(), "admin") {
+	if profiles, err := s.Profiles(context.Background()); err == nil || profiles != nil || !strings.Contains(err.Error(), "admin") {
 		t.Errorf("profiles = %+v %v", profiles, err)
 	}
 }

@@ -393,7 +393,13 @@ export function Results({ view, readOnly }: { view: View; readOnly: boolean }) {
           <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setSlam((n) => n + 1)}>
             Replay stamp
           </button>
-          <button className="btn primary" onClick={() => refine.setScreen({ kind: 'tickets' })}>
+          <button
+            className="btn primary"
+            onClick={() => {
+              refine.setScreen({ kind: 'tickets' })
+              void refine.refresh()
+            }}
+          >
             Back to tickets
           </button>
         </footer>

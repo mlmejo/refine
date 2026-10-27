@@ -237,7 +237,7 @@ const maxOtherDescription = 600
 // Those the developer rejected as blockers are marked, and so are overlaps,
 // whose own work stays with them.
 func otherTickets(candidates []jira.Ticket, r Refinement) string {
-	decided := map[string]string{}
+	decided := map[string]Decision{}
 	for _, b := range r.Related.Blockers {
 		decided[b.Key] = b.Decision
 	}

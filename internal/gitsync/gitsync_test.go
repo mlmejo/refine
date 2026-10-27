@@ -43,8 +43,8 @@ func cloned(t *testing.T) (origin, clone string) {
 func TestFetchPrefersDevelop(t *testing.T) {
 	origin, clone := cloned(t)
 	run(t, origin, "branch", "develop")
-	s := Fetch(context.Background(), "app", clone)
-	if s.Error != "" || s.Branch != "develop" || s.Commit != run(t, origin, "rev-parse", "develop") {
+	s, err := Fetch(context.Background(), "app", clone)
+	if err != nil || s.Error != "" || s.Branch != "develop" || s.Commit != run(t, origin, "rev-parse", "develop") {
 		t.Fatalf("status = %+v", s)
 	}
 }
@@ -52,14 +52,14 @@ func TestFetchPrefersDevelop(t *testing.T) {
 func TestFetchFallsBackToTheDefaultBranchAndCountsNewCommits(t *testing.T) {
 	ctx := context.Background()
 	origin, clone := cloned(t)
-	if s := Fetch(ctx, "app", clone); s.Error != "" || s.Branch != "main" || s.New != 0 {
-		t.Fatalf("first fetch = %+v", s)
+	if s, err := Fetch(ctx, "app", clone); err != nil || s.Branch != "main" || s.New != 0 {
+		t.Fatalf("first fetch = %+v %v", s, err)
 	}
 	commit(t, origin, "app.txt", "v2")
 	commit(t, origin, "app.txt", "v3")
-	s := Fetch(ctx, "app", clone)
-	if s.Error != "" || s.New != 2 || s.Commit != run(t, origin, "rev-parse", "main") {
-		t.Fatalf("second fetch = %+v", s)
+	s, err := Fetch(ctx, "app", clone)
+	if err != nil || s.New != 2 || s.Commit != run(t, origin, "rev-parse", "main") {
+		t.Fatalf("second fetch = %+v %v", s, err)
 	}
 	// The checkout is not touched.
 	if got, _ := os.ReadFile(filepath.Join(clone, "app.txt")); string(got) != "v1" {
@@ -70,8 +70,8 @@ func TestFetchFallsBackToTheDefaultBranchAndCountsNewCommits(t *testing.T) {
 func TestFetchFailsWithoutOrigin(t *testing.T) {
 	dir := t.TempDir()
 	run(t, dir, "init", "--quiet")
-	s := Fetch(context.Background(), "app", dir)
-	if s.Error == "" || s.Commit != "" {
-		t.Fatalf("status = %+v", s)
+	s, err := Fetch(context.Background(), "app", dir)
+	if err == nil || s.Error != "" || s.Name != "app" || s.Commit != "" {
+		t.Fatalf("status = %+v %v", s, err)
 	}
 }
