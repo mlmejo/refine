@@ -6,6 +6,7 @@ import { Tickets } from './views/Tickets'
 import { Ticket } from './views/Ticket'
 import { ReposScreen } from './views/ReposScreen'
 import { ClaudeScreen } from './views/ClaudeScreen'
+import { SetupScreen } from './views/SetupScreen'
 import { api } from './api'
 import type { ClaudeDir } from './types'
 import { Palette } from './views/Palette'
@@ -26,6 +27,7 @@ export function App() {
       </div>
     )
   }
+  if (state.status === 'setup') return <SetupScreen />
   if (state.status === 'failed') {
     return (
       <div className="boot">

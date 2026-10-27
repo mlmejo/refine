@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { startBackend, stopBackend, useLoginPath, type Backend, type BackendState } from './backend'
+import { NotSetUp, saveAccount, startBackend, stopBackend, useLoginPath, type Account, type Backend, type BackendState } from './backend'
 
 let backend: Backend | undefined
 let state: BackendState = { status: 'starting' }
@@ -20,7 +20,7 @@ async function boot(): Promise<void> {
     })
     setState({ status: 'ready' })
   } catch (err) {
-    setState({ status: 'failed', error: (err as Error).message })
+    setState(err instanceof NotSetUp ? { status: 'setup' } : { status: 'failed', error: (err as Error).message })
   }
 }
 
@@ -85,6 +85,18 @@ ipcMain.handle('restart-backend', async () => {
   backend = undefined
   await boot()
   return state
+})
+
+// save-account writes the Jira account the setup screen took, then starts
+// refine. It returns an error for the screen to show, or null.
+ipcMain.handle('save-account', async (_event, account: Account): Promise<string | null> => {
+  try {
+    await saveAccount(account)
+  } catch (err) {
+    return (err as Error).message
+  }
+  await boot()
+  return null
 })
 
 ipcMain.handle('pick-folder', async (_event, start: string | undefined, purpose: 'repos' | 'claude' | undefined) => {

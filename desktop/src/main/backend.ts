@@ -14,8 +14,19 @@ export type Backend = {
 
 export type BackendState =
   | { status: 'starting' }
+  | { status: 'setup' }
   | { status: 'ready' }
   | { status: 'failed'; error: string }
+
+// Account is the Jira account refine setup writes to the config.
+export type Account = { site: string; email: string; token: string }
+
+// exitNotSetUp is refine serve's exit code when the config lacks the Jira
+// account.
+const exitNotSetUp = 3
+
+// NotSetUp is startBackend's error when refine needs the Jira account first.
+export class NotSetUp extends Error {}
 
 // binary finds refine: REFINE_BIN, the copy bundled with the app, or the one
 // `pnpm go:build` puts in the repo's bin/.
@@ -68,8 +79,36 @@ export function startBackend(onExit: (error: string) => void): Promise<Backend> 
     child.once('error', (err) => reject(err))
     child.once('exit', (code) => {
       const error = stderr.trim() || `refine serve exited with code ${code}`
-      if (!ready) reject(new Error(error))
+      if (!ready) reject(code === exitNotSetUp ? new NotSetUp(error) : new Error(error))
       else onExit(error)
+    })
+  })
+}
+
+// saveAccount runs refine setup, which checks the account with Jira and
+// writes it to the config. It returns the account's display name. The token
+// goes over stdin, never the command line.
+export function saveAccount(account: Account): Promise<string> {
+  const bin = binary()
+  const child = spawn(bin, ['setup'], { stdio: ['pipe', 'pipe', 'pipe'] })
+  let stdout = ''
+  let stderr = ''
+  child.stdout.on('data', (chunk) => (stdout += chunk.toString()))
+  child.stderr.on('data', (chunk) => (stderr += chunk.toString()))
+  child.stdin.end(JSON.stringify(account))
+
+  return new Promise((resolvePromise, reject) => {
+    child.once('error', (err) => reject(err))
+    child.once('exit', (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr.trim().replace(/^refine: /, '') || `refine setup exited with code ${code}`))
+        return
+      }
+      try {
+        resolvePromise((JSON.parse(stdout) as { name: string }).name)
+      } catch {
+        reject(new Error(`refine setup said: ${stdout}`))
+      }
     })
   })
 }

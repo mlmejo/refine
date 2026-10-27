@@ -19,6 +19,10 @@ import (
 // token in the config.
 const TokenEnv = "REFINE_JIRA_TOKEN"
 
+// ErrNotSetUp means the config is missing, or lacks the Jira site, email or
+// token. The desktop app asks for them when it sees it.
+var ErrNotSetUp = errors.New("refine is not set up")
+
 // DefaultProject prefixes a bare ticket number typed on the home screen.
 const DefaultProject = "GEEK"
 
@@ -79,7 +83,7 @@ func Load(path string) (Config, error) {
 	var cfg Config
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return cfg, fmt.Errorf("no config at %s", path)
+			return cfg, fmt.Errorf("%w: no config at %s", ErrNotSetUp, path)
 		}
 		return cfg, fmt.Errorf("read %s: %w", path, err)
 	}
@@ -125,7 +129,7 @@ func (c Config) validate(path string) error {
 		missing = append(missing, "jira.token")
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("%s: missing %s", path, strings.Join(missing, ", "))
+		return fmt.Errorf("%w: %s: missing %s", ErrNotSetUp, path, strings.Join(missing, ", "))
 	}
 	return nil
 }
@@ -213,6 +217,41 @@ func (r *Repos) Remove(name string) error {
 	}
 	delete(r.m, name)
 	return nil
+}
+
+// SetJira sets jira.site, jira.email and jira.token in the config at path,
+// leaving the rest of the file as written. It makes the file when there is
+// none, and leaves it readable by its owner alone since it holds the token.
+func SetJira(path, site, email, token string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return err
+	}
+	return editTable(path, "jira", func(lines []string, start, end int) ([]string, error) {
+		at := end
+		for at > start && strings.TrimSpace(lines[at-1]) == "" {
+			at--
+		}
+		for _, kv := range [][2]string{{"site", site}, {"email", email}, {"token", token}} {
+			entry := kv[0] + " = " + strconv.Quote(kv[1])
+			if i := repoLine(lines[start:at], kv[0]); i >= 0 {
+				lines[start+i] = entry
+				continue
+			}
+			lines = slices.Insert(lines, at, entry)
+			at++
+		}
+		return lines, nil
+	})
 }
 
 // ConfigDirEnv is the variable Claude Code reads its config directory from.
@@ -305,10 +344,16 @@ func editTable(path, table string, edit func(lines []string, start, end int) ([]
 	if err != nil {
 		return err
 	}
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	var lines []string
+	if text := strings.TrimRight(string(data), "\n"); text != "" {
+		lines = strings.Split(text, "\n")
+	}
 	start := slices.IndexFunc(lines, func(line string) bool { return strings.TrimSpace(line) == "["+table+"]" }) + 1
 	if start == 0 {
-		lines = append(lines, "", "["+table+"]")
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, "["+table+"]")
 		start = len(lines)
 	}
 	end := len(lines)

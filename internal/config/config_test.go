@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -265,5 +266,66 @@ func TestClaudeDirSetWritesTheConfig(t *testing.T) {
 	data, _ := os.ReadFile(path)
 	if n := strings.Count(string(data), "config_dir"); n != 1 {
 		t.Fatalf("config_dir written %d times:\n%s", n, data)
+	}
+}
+
+func TestLoadNotSetUp(t *testing.T) {
+	t.Setenv(TokenEnv, "")
+	for name, path := range map[string]string{
+		"missing file": filepath.Join(t.TempDir(), "nope.toml"),
+		"no token":     write(t, "[jira]\nsite = \"s\"\nemail = \"e\"\n"),
+	} {
+		if _, err := Load(path); !errors.Is(err, ErrNotSetUp) {
+			t.Errorf("%s: err = %v, want ErrNotSetUp", name, err)
+		}
+	}
+}
+
+func TestSetJiraMakesTheFile(t *testing.T) {
+	t.Setenv(TokenEnv, "")
+	path := filepath.Join(t.TempDir(), "refine", "config.toml")
+	if err := SetJira(path, "s", "e", "secret"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if want := "[jira]\nsite = \"s\"\nemail = \"e\"\ntoken = \"secret\"\n"; string(data) != want {
+		t.Errorf("file =\n%s\nwant\n%s", data, want)
+	}
+	if cfg, err := Load(path); err != nil || cfg.Jira.Token != "secret" {
+		t.Errorf("token = %q err = %v", cfg.Jira.Token, err)
+	}
+}
+
+func TestSetJiraKeepsTheRestOfTheFile(t *testing.T) {
+	path := write(t, `# my config
+[jira]
+site = "old"
+sprint = "Mine"
+
+[repos]
+dating = "~/dating"
+`)
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetJira(path, "s", "e", "secret"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	want := `# my config
+[jira]
+site = "s"
+sprint = "Mine"
+email = "e"
+token = "secret"
+
+[repos]
+dating = "~/dating"
+`
+	if string(data) != want {
+		t.Errorf("file =\n%s\nwant\n%s", data, want)
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, want 0600", info.Mode().Perm())
 	}
 }
