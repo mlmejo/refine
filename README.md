@@ -116,6 +116,7 @@ internal/claude     runs headless Claude Code for one step
 internal/jira       the Jira client
 internal/server     the HTTP API the app calls
 internal/store      refinements and deploy profiles in SQLite
+internal/gitcmd     runs git with no password prompts
 internal/gitsync    fetches the branch Claude reads
 internal/worktree   checks it out into a refine-owned worktree
 desktop             the Electron app
@@ -126,6 +127,7 @@ spike               the original headless-Claude spike
 
 ```sh
 make test    # go test ./... and the app's typecheck
+make lint    # golangci-lint, configured in .golangci.yml
 ```
 
 ## Flags

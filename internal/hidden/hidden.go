@@ -4,9 +4,12 @@ package hidden
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"sync"
 )
 
 // Store keeps hidden ticket keys in one JSON file.
@@ -43,4 +46,48 @@ func (s Store) Save(keys []string) error {
 		return err
 	}
 	return os.Rename(tmp, s.Path)
+}
+
+// Set is the hidden ticket keys, kept in a Store. It is safe for concurrent
+// use.
+type Set struct {
+	mu    sync.Mutex
+	keys  map[string]bool
+	store Store
+}
+
+// Open loads the set kept in the file at path.
+func Open(path string) (*Set, error) {
+	store := Store{Path: path}
+	keys, err := store.Load()
+	if err != nil {
+		return nil, err
+	}
+	s := &Set{keys: map[string]bool{}, store: store}
+	for _, key := range keys {
+		s.keys[key] = true
+	}
+	return s, nil
+}
+
+// Has reports whether key is hidden.
+func (s *Set) Has(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.keys[key]
+}
+
+// Set hides or unhides key and saves the set when it changes.
+func (s *Set) Set(key string, hide bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.keys[key] == hide {
+		return nil
+	}
+	if hide {
+		s.keys[key] = true
+	} else {
+		delete(s.keys, key)
+	}
+	return s.store.Save(slices.Collect(maps.Keys(s.keys)))
 }
