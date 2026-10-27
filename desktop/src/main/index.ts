@@ -87,12 +87,15 @@ ipcMain.handle('restart-backend', async () => {
   return state
 })
 
-ipcMain.handle('pick-folder', async (_event, start: string | undefined) => {
+ipcMain.handle('pick-folder', async (_event, start: string | undefined, purpose: 'repos' | 'claude' | undefined) => {
+  // A Claude config directory is a dot folder, such as ~/.claude-team, so
+  // the picker shows hidden folders for it.
+  const claude = purpose === 'claude'
   const result = await dialog.showOpenDialog(win!, {
-    title: 'Pick a folder; refine finds the git repos in it',
-    buttonLabel: 'Scan',
+    title: claude ? 'Pick the Claude Code config folder refine should use' : 'Pick a folder; refine finds the git repos in it',
+    buttonLabel: claude ? 'Use' : 'Scan',
     defaultPath: start,
-    properties: ['openDirectory']
+    properties: claude ? ['openDirectory', 'showHiddenFiles'] : ['openDirectory']
   })
   return result.canceled ? null : result.filePaths[0]
 })

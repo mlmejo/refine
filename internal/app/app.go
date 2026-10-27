@@ -77,9 +77,10 @@ func Open() (*App, error) {
 	// The service lists the repos when it needs them, so a change the server
 	// makes applies to the next step.
 	repos := config.NewRepos(path, cfg.Repos)
+	claudeDir := config.NewClaudeDir(path, cfg.Claude.ConfigDir)
 	service := &refine.Service{
 		Jira:        jira.New(cfg.Jira.Site, cfg.Jira.Email, cfg.Jira.Token),
-		Claude:      claude.Runner{Dir: state},
+		Claude:      claude.Runner{Dir: state, ConfigDir: claudeDir.Dir},
 		Store:       db,
 		Git:         git{},
 		Sprint:      cfg.Jira.Sprint,
@@ -97,6 +98,6 @@ func Open() (*App, error) {
 		}
 	}
 	info := server.Info{Site: cfg.Jira.Site, Project: cfg.Jira.Project, Sprint: cfg.Jira.Sprint, ReadySprint: cfg.Jira.ReadySprint}
-	srv := server.New(info, service, repos, hiddenSet)
+	srv := server.New(info, service, repos, claudeDir, hiddenSet)
 	return &App{Server: srv, Store: db}, nil
 }

@@ -12,7 +12,7 @@ declare global {
       backendState: () => Promise<BackendState>
       restartBackend: () => Promise<BackendState>
       onBackendState: (listener: (state: BackendState) => void) => () => void
-      pickFolder: (start?: string) => Promise<string | null>
+      pickFolder: (start?: string, purpose?: 'repos' | 'claude') => Promise<string | null>
       openExternal: (url: string) => Promise<void>
     }
   }

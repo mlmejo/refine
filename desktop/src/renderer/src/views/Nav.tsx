@@ -1,11 +1,11 @@
 import { useRefine } from '../store'
 import { Icon } from './Icon'
 
-// Nav is the sidebar: search, then the workspace's two places.
+// Nav is the sidebar: search, then the workspace's places.
 export function Nav() {
   const refine = useRefine()
   const { screen } = refine
-  const onTickets = screen.kind !== 'repos'
+  const onTickets = screen.kind === 'tickets' || screen.kind === 'ticket'
   return (
     <nav className="nav" aria-label="Main">
       <div className="brand">
@@ -27,6 +27,10 @@ export function Nav() {
         <button className={`nav-item ${screen.kind === 'repos' ? 'active' : ''}`} onClick={() => refine.setScreen({ kind: 'repos' })}>
           <Icon name="folder" />
           Repos
+        </button>
+        <button className={`nav-item ${screen.kind === 'claude' ? 'active' : ''}`} onClick={() => refine.setScreen({ kind: 'claude' })}>
+          <Icon name="account" />
+          Claude
         </button>
       </div>
       <div className="nav-foot">

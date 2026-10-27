@@ -59,6 +59,9 @@ type Runner struct {
 	// Bin is the claude binary; "" means claude on the PATH.
 	Bin string
 	Dir string
+	// ConfigDir returns the Claude Code config directory each run uses,
+	// which picks the account; nil leaves refine's environment as it is.
+	ConfigDir func() string
 }
 
 // Do runs the call and decodes Claude's answer into into. Each tool Claude
@@ -73,6 +76,9 @@ func (r Runner) Do(ctx context.Context, call Call, into any, progress func(Activ
 	// Load each repo's CLAUDE.md, which --add-dir skips by default: it says
 	// what the repo is, such as a rewrite whose original is the spec.
 	cmd.Env = append(os.Environ(), "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1")
+	if r.ConfigDir != nil {
+		cmd.Env = withConfigDir(cmd.Env, r.ConfigDir())
+	}
 	cmd.WaitDelay = 5 * time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -97,6 +103,24 @@ func (r Runner) Do(ctx context.Context, call Call, into any, progress func(Activ
 		return Run{}, fmt.Errorf("claude: %w: %s", readErr, strings.TrimSpace(stderr.String()))
 	}
 	return decode(*result, into)
+}
+
+// configDirEnv is the variable Claude Code reads its config directory from.
+const configDirEnv = "CLAUDE_CONFIG_DIR"
+
+// withConfigDir points env at the config directory dir. Claude Code keeps
+// the default ~/.claude's login in ~/.claude.json, outside it, and looks
+// inside the directory once CLAUDE_CONFIG_DIR is set, so ~/.claude unsets
+// the variable rather than naming it. "" leaves env as it is.
+func withConfigDir(env []string, dir string) []string {
+	if dir == "" {
+		return env
+	}
+	env = slices.DeleteFunc(env, func(kv string) bool { return strings.HasPrefix(kv, configDirEnv+"=") })
+	if home, err := os.UserHomeDir(); err == nil && dir == filepath.Join(home, ".claude") {
+		return env
+	}
+	return append(env, configDirEnv+"="+dir)
 }
 
 func args(call Call) []string {

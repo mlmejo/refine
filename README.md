@@ -80,12 +80,19 @@ project = "GEEK"
 sprint = "Refinement Ready - Team John"
 ready_sprint = "Ready for Sprint - Team John"
 
+# Optional: the Claude Code config folder, and so the account, refine's runs
+# use. Unset, it is $CLAUDE_CONFIG_DIR when refine sees one, else ~/.claude.
+[claude]
+config_dir = "~/.claude-team"
+
 [repos]
 api = "~/develop/api"
 web = "~/develop/web"
 ```
 
-Repos can also be added and removed from the app. `REFINE_JIRA_TOKEN`, when
+Repos can also be added and removed from the app. So can the Claude config
+folder, from the Claude page; when the folder is missing, the app asks for it
+before anything else. `REFINE_JIRA_TOKEN`, when
 set, takes the place of the token in the file.
 
 How Acceptance Criteria and Technical Implementation are written lives in

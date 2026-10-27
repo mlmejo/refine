@@ -34,6 +34,13 @@ type Repos interface {
 	Remove(name string) error
 }
 
+// ClaudeDir reads and changes the Claude Code config directory refine's runs
+// use.
+type ClaudeDir interface {
+	Dir() string
+	Set(dir string) error
+}
+
 // Info is what the app shows about this refine.
 type Info struct {
 	Site        string `json:"site"`
@@ -52,6 +59,7 @@ type Server struct {
 	about   Info
 	service *refine.Service
 	config  Repos
+	claude  ClaudeDir
 	hidden  Hider
 	token   string
 
@@ -64,8 +72,8 @@ type Server struct {
 
 // New returns a server with a fresh random token. hidden is the set the
 // service reads when it lists tickets.
-func New(info Info, service *refine.Service, repos Repos, hidden Hider) *Server {
-	return &Server{about: info, service: service, config: repos, hidden: hidden, token: rand.Text(), stamping: map[string]bool{}}
+func New(info Info, service *refine.Service, repos Repos, claudeDir ClaudeDir, hidden Hider) *Server {
+	return &Server{about: info, service: service, config: repos, claude: claudeDir, hidden: hidden, token: rand.Text(), stamping: map[string]bool{}}
 }
 
 // Token is what every request sends as "Authorization: Bearer <token>".
@@ -91,6 +99,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/tickets/{key}/rounds", s.restartQuestions)
 	mux.HandleFunc("PUT /api/tickets/{key}/result", s.edit)
 	mux.HandleFunc("POST /api/tickets/{key}/stamp", s.stamp)
+	mux.HandleFunc("GET /api/claude", s.claudeDir)
+	mux.HandleFunc("PUT /api/claude", s.setClaudeDir)
 	mux.HandleFunc("GET /api/repos", s.repos)
 	mux.HandleFunc("POST /api/repos", s.addRepo)
 	mux.HandleFunc("DELETE /api/repos/{name}", s.removeRepo)
@@ -330,6 +340,28 @@ func (s *Server) stamp(w http.ResponseWriter, r *http.Request) {
 type repo struct {
 	Name string `json:"name"`
 	Dir  string `json:"dir"`
+}
+
+// claudeDir says which Claude Code config directory runs use, and whether it
+// is there; the app asks for one when it is not.
+func (s *Server) claudeDir(w http.ResponseWriter, r *http.Request) {
+	dir := s.claude.Dir()
+	info, err := os.Stat(dir)
+	reply(w, map[string]any{"dir": dir, "found": err == nil && info.IsDir()})
+}
+
+func (s *Server) setClaudeDir(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Dir string `json:"dir"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if err := s.claude.Set(body.Dir); err != nil {
+		fail(w, http.StatusBadRequest, err)
+		return
+	}
+	s.claudeDir(w, r)
 }
 
 func (s *Server) repos(w http.ResponseWriter, r *http.Request) {

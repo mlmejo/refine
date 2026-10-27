@@ -222,3 +222,48 @@ func TestReposConcurrentAccess(t *testing.T) {
 		t.Errorf("repos = %v", got)
 	}
 }
+
+func TestClaudeDirDefaultsThenEnvThenConfig(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	t.Setenv(ConfigDirEnv, "")
+	c := NewClaudeDir(write(t, "[jira]\n"), "")
+	if got := c.Dir(); got != filepath.Join(home, ".claude") {
+		t.Errorf("default = %s", got)
+	}
+	t.Setenv(ConfigDirEnv, "~/.claude-team")
+	if got := c.Dir(); got != filepath.Join(home, ".claude-team") {
+		t.Errorf("env = %s", got)
+	}
+	if got := NewClaudeDir("", "/set").Dir(); got != "/set" {
+		t.Errorf("config = %s", got)
+	}
+}
+
+func TestClaudeDirSetWritesTheConfig(t *testing.T) {
+	t.Setenv(TokenEnv, "secret")
+	path := write(t, "[jira]\nsite = \"s\"\nemail = \"e\"\n\n[repos]\na = \"/a\"\n")
+	c := NewClaudeDir(path, "")
+	if err := c.Set(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("Set took a missing folder")
+	}
+	if err := c.Set(""); err == nil {
+		t.Fatal("Set took an empty folder")
+	}
+	for range 2 {
+		dir := t.TempDir()
+		if err := c.Set(dir); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Dir() != dir || cfg.Claude.ConfigDir != dir || cfg.Repos["a"] != "/a" {
+			t.Fatalf("dir = %s, cfg = %+v", c.Dir(), cfg)
+		}
+	}
+	data, _ := os.ReadFile(path)
+	if n := strings.Count(string(data), "config_dir"); n != 1 {
+		t.Fatalf("config_dir written %d times:\n%s", n, data)
+	}
+}

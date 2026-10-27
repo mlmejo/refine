@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { api } from './api'
 import type { Info, Job, JobKind, Page, View } from './types'
 
-export type Screen = { kind: 'tickets' } | { kind: 'ticket'; key: string } | { kind: 'repos' }
+export type Screen = { kind: 'tickets' } | { kind: 'ticket'; key: string } | { kind: 'repos' } | { kind: 'claude' }
 
 export type Toast = { text: string; error?: boolean }
 

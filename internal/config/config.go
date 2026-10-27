@@ -30,8 +30,15 @@ const DefaultReadySprint = "Ready for Sprint - Team John"
 
 // Config is the whole config file.
 type Config struct {
-	Jira  Jira              `toml:"jira"`
-	Repos map[string]string `toml:"repos"`
+	Jira   Jira              `toml:"jira"`
+	Claude Claude            `toml:"claude"`
+	Repos  map[string]string `toml:"repos"`
+}
+
+// Claude says which Claude Code config directory refine's runs use, for a
+// developer who keeps one per account. "" means the default.
+type Claude struct {
+	ConfigDir string `toml:"config_dir"`
 }
 
 // Jira holds the Jira site and account, and the account's API token.
@@ -98,6 +105,7 @@ func Load(path string) (Config, error) {
 	if cfg.Jira.Project == "" {
 		cfg.Jira.Project = DefaultProject
 	}
+	cfg.Claude.ConfigDir = expandHome(cfg.Claude.ConfigDir)
 	for name, dir := range cfg.Repos {
 		cfg.Repos[name] = expandHome(dir)
 	}
@@ -207,18 +215,100 @@ func (r *Repos) Remove(name string) error {
 	return nil
 }
 
-// editRepos hands edit the file's lines and the bounds of its [repos] table,
+// ConfigDirEnv is the variable Claude Code reads its config directory from.
+const ConfigDirEnv = "CLAUDE_CONFIG_DIR"
+
+// DefaultClaudeDir returns ~/.claude, Claude Code's config directory when
+// nothing says otherwise.
+func DefaultClaudeDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".claude"), nil
+}
+
+// SetClaudeDir sets claude.config_dir in the config at path, leaving the rest
+// of the file as written. A dir under the home directory is written with ~.
+func SetClaudeDir(path, dir string) error {
+	return editTable(path, "claude", func(lines []string, start, end int) ([]string, error) {
+		entry := "config_dir = " + strconv.Quote(collapseHome(dir))
+		if i := repoLine(lines[start:end], "config_dir"); i >= 0 {
+			lines[start+i] = entry
+			return lines, nil
+		}
+		return slices.Insert(lines, start, entry), nil
+	})
+}
+
+// ClaudeDir is the Claude Code config directory refine's runs use, kept in
+// step with claude.config_dir in the config file. It is safe to use from many
+// goroutines.
+type ClaudeDir struct {
+	path string
+	mu   sync.RWMutex
+	dir  string
+}
+
+// NewClaudeDir returns dir, the claude.config_dir in the config at path; ""
+// when it is not set.
+func NewClaudeDir(path, dir string) *ClaudeDir {
+	return &ClaudeDir{path: path, dir: dir}
+}
+
+// Dir returns claude.config_dir when it is set, else ConfigDirEnv from
+// refine's environment, else ~/.claude.
+func (c *ClaudeDir) Dir() string {
+	c.mu.RLock()
+	dir := c.dir
+	c.mu.RUnlock()
+	if dir != "" {
+		return dir
+	}
+	if dir := os.Getenv(ConfigDirEnv); dir != "" {
+		return expandHome(dir)
+	}
+	dir, _ = DefaultClaudeDir()
+	return dir
+}
+
+// Set writes dir as claude.config_dir in the config file, then uses it. dir
+// must be a directory.
+func (c *ClaudeDir) Set(dir string) error {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return errors.New("give the folder")
+	}
+	dir = filepath.Clean(expandHome(dir))
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return fmt.Errorf("%s is not a folder", dir)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := SetClaudeDir(c.path, dir); err != nil {
+		return err
+	}
+	c.dir = dir
+	return nil
+}
+
+// editRepos hands edit the file's lines and the bounds of its [repos] table.
+func editRepos(path string, edit func(lines []string, start, end int) ([]string, error)) error {
+	return editTable(path, "repos", edit)
+}
+
+// editTable hands edit the file's lines and the bounds of its [table] table,
 // adding the table when there is none, and writes the result back once it
 // still parses.
-func editRepos(path string, edit func(lines []string, start, end int) ([]string, error)) error {
+func editTable(path, table string, edit func(lines []string, start, end int) ([]string, error)) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	start := slices.IndexFunc(lines, func(line string) bool { return strings.TrimSpace(line) == "[repos]" }) + 1
+	start := slices.IndexFunc(lines, func(line string) bool { return strings.TrimSpace(line) == "["+table+"]" }) + 1
 	if start == 0 {
-		lines = append(lines, "", "[repos]")
+		lines = append(lines, "", "["+table+"]")
 		start = len(lines)
 	}
 	end := len(lines)

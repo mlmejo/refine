@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('refine', {
       ipcRenderer.removeListener('backend-state', handler)
     }
   },
-  pickFolder: (start?: string): Promise<string | null> => ipcRenderer.invoke('pick-folder', start),
+  pickFolder: (start?: string, purpose?: 'repos' | 'claude'): Promise<string | null> =>
+    ipcRenderer.invoke('pick-folder', start, purpose),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url)
 })

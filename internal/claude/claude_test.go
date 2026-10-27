@@ -119,3 +119,17 @@ func TestArgsWithoutReposGiveNoTools(t *testing.T) {
 		t.Fatalf("args = %s", got)
 	}
 }
+
+func TestWithConfigDir(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	env := []string{"A=1", "CLAUDE_CONFIG_DIR=/old"}
+	if got := withConfigDir(env, ""); !slices.Equal(got, env) {
+		t.Errorf("empty = %v", got)
+	}
+	if got := withConfigDir(slices.Clone(env), "/team"); !slices.Equal(got, []string{"A=1", "CLAUDE_CONFIG_DIR=/team"}) {
+		t.Errorf("team = %v", got)
+	}
+	if got := withConfigDir(slices.Clone(env), filepath.Join(home, ".claude")); !slices.Equal(got, []string{"A=1"}) {
+		t.Errorf("default = %v", got)
+	}
+}

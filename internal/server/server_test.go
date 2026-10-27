@@ -28,6 +28,18 @@ func (r fakeRepos) List() map[string]string  { return maps.Clone(r) }
 func (fakeRepos) Add(name, dir string) error { return errors.ErrUnsupported }
 func (fakeRepos) Remove(name string) error   { return errors.ErrUnsupported }
 
+// fakeClaudeDir is a Claude config directory that Set changes.
+type fakeClaudeDir struct{ dir string }
+
+func (c *fakeClaudeDir) Dir() string { return c.dir }
+func (c *fakeClaudeDir) Set(dir string) error {
+	if dir == "" {
+		return errors.New("give the folder")
+	}
+	c.dir = dir
+	return nil
+}
+
 // fakeJira holds tickets. When hold is set, Update waits on it, telling
 // held it has started.
 type fakeJira struct {
@@ -119,7 +131,7 @@ func setupWith(t *testing.T, j fakeJira, c refine.Claude) *Server {
 	}
 	svc := &refine.Service{Jira: j, Claude: c, Store: st, Git: noGit{},
 		Sprint: "S", ReadySprint: "R", Repos: fakeRepos{"admin": "/r/admin"}, Hidden: hiddenSet}
-	srv := New(Info{Project: "GEEK"}, svc, fakeRepos{"admin": "/r/admin"}, hiddenSet)
+	srv := New(Info{Project: "GEEK"}, svc, fakeRepos{"admin": "/r/admin"}, &fakeClaudeDir{}, hiddenSet)
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -149,7 +161,7 @@ func TestNeedsTheToken(t *testing.T) {
 
 func TestNewLeavesTheServiceAlone(t *testing.T) {
 	svc := &refine.Service{}
-	srv := New(Info{}, svc, fakeRepos{}, hiddenKeys{})
+	srv := New(Info{}, svc, fakeRepos{}, &fakeClaudeDir{}, hiddenKeys{})
 	t.Cleanup(srv.Close)
 	if svc.Hidden != nil {
 		t.Fatal("New set the service's Hidden")
@@ -161,7 +173,7 @@ func TestNewLeavesTheServiceAlone(t *testing.T) {
 
 func TestHideWritesTheSetItWasGiven(t *testing.T) {
 	keys := hiddenKeys{}
-	srv := New(Info{Project: "GEEK"}, &refine.Service{}, fakeRepos{}, keys)
+	srv := New(Info{Project: "GEEK"}, &refine.Service{}, fakeRepos{}, &fakeClaudeDir{}, keys)
 	t.Cleanup(srv.Close)
 	call(t, srv, "PUT", "/api/hidden/GEEK-7", "", nil)
 	if !keys["GEEK-7"] {
@@ -410,5 +422,25 @@ func TestHandlersStopWhenTheRequestIsCancelled(t *testing.T) {
 		if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "context canceled") {
 			t.Errorf("%s %s = %d %s", method, path, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+func TestClaudeDirSaysWhetherItIsThere(t *testing.T) {
+	dir := &fakeClaudeDir{dir: filepath.Join(t.TempDir(), "missing")}
+	srv := New(Info{}, &refine.Service{}, fakeRepos{}, dir, hiddenKeys{})
+	t.Cleanup(srv.Close)
+	var got struct {
+		Dir   string `json:"dir"`
+		Found bool   `json:"found"`
+	}
+	if code := call(t, srv, "GET", "/api/claude", "", &got); code != 200 || got.Found {
+		t.Fatalf("code = %d, got = %+v", code, got)
+	}
+	there := t.TempDir()
+	if code := call(t, srv, "PUT", "/api/claude", `{"dir":"`+there+`"}`, &got); code != 200 || !got.Found || got.Dir != there {
+		t.Fatalf("code = %d, got = %+v", code, got)
+	}
+	if code := call(t, srv, "PUT", "/api/claude", `{"dir":""}`, nil); code != http.StatusBadRequest {
+		t.Fatalf("empty: code = %d", code)
 	}
 }

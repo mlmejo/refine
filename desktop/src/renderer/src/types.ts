@@ -12,6 +12,10 @@ export type Info = {
   prompts: string
 }
 
+// ClaudeDir is the Claude Code config directory refine's runs use, and
+// whether it is there.
+export type ClaudeDir = { dir: string; found: boolean }
+
 export type Row = {
   key: string
   summary: string

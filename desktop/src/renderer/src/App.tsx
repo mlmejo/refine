@@ -5,6 +5,9 @@ import { Nav } from './views/Nav'
 import { Tickets } from './views/Tickets'
 import { Ticket } from './views/Ticket'
 import { ReposScreen } from './views/ReposScreen'
+import { ClaudeScreen } from './views/ClaudeScreen'
+import { api } from './api'
+import type { ClaudeDir } from './types'
 import { Palette } from './views/Palette'
 
 export function App() {
@@ -51,6 +54,13 @@ export function App() {
 function Shell() {
   const refine = useRefine()
   const { setPalette, screen, setScreen } = refine
+  const [claude, setClaude] = useState<ClaudeDir>()
+
+  useEffect(() => {
+    // Without the Claude config folder no run can start, so a missing one is
+    // asked for before anything else.
+    void api.claudeDir().then(setClaude, () => undefined)
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -67,6 +77,8 @@ function Shell() {
     if ('Notification' in window && Notification.permission === 'default') void Notification.requestPermission()
   }, [])
 
+  if (claude && !claude.found) return <ClaudeScreen claude={claude} onSaved={setClaude} />
+
   return (
     <div className="shell">
       <Nav />
@@ -74,6 +86,7 @@ function Shell() {
         {screen.kind === 'tickets' && <Tickets />}
         {screen.kind === 'ticket' && <Ticket key={screen.key} ticketKey={screen.key} />}
         {screen.kind === 'repos' && <ReposScreen onBack={() => setScreen({ kind: 'tickets' })} />}
+        {screen.kind === 'claude' && claude && <ClaudeScreen claude={claude} onSaved={setClaude} onBack={() => setScreen({ kind: 'tickets' })} />}
       </main>
       {refine.palette && <Palette />}
       {refine.toast && <div className={`toast ${refine.toast.error ? 'error-text' : ''}`}>{refine.toast.text}</div>}

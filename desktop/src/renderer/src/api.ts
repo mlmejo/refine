@@ -1,4 +1,4 @@
-import type { Answers, Found, Info, Job, JobKind, Page, QA, Repo, Result, View, Format, FormatField } from './types'
+import type { Answers, ClaudeDir, Found, Info, Job, JobKind, Page, QA, Repo, Result, View, Format, FormatField } from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -45,6 +45,9 @@ export const api = {
   startJob: (kind: JobKind, k: string, explanation?: string) =>
     call<Job>('POST', '/api/jobs', { kind, key: k, explanation }),
   cancelJob: (id: string) => call<null>('DELETE', `/api/jobs/${id}`),
+
+  claudeDir: () => call<ClaudeDir>('GET', '/api/claude'),
+  setClaudeDir: (dir: string) => call<ClaudeDir>('PUT', '/api/claude', { dir }),
 
   repos: () => call<Repo[]>('GET', '/api/repos'),
   addRepo: (name: string, dir: string) => call<Repo[]>('POST', '/api/repos', { name, dir }),
