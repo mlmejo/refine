@@ -1,3 +1,4 @@
 .env
 spike/out*/
 bin/
+.tickets/
