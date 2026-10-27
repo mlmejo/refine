@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mlmejo/refine/internal/claude"
 	"github.com/mlmejo/refine/internal/gitsync"
@@ -48,7 +49,7 @@ func (f *fakeJira) Tickets(_ context.Context, jql string) ([]jira.Ticket, error)
 	}
 	return out, nil
 }
-func (f *fakeJira) GetTicket(_ context.Context, key string) (jira.Ticket, error) {
+func (f *fakeJira) Ticket(_ context.Context, key string) (jira.Ticket, error) {
 	t, ok := f.tickets[key]
 	if !ok {
 		return jira.Ticket{}, fmt.Errorf("no %s", key)
@@ -89,10 +90,15 @@ func (f *fakeJira) MoveToSprint(_ context.Context, key, sprint string) error {
 type fakeClaude struct {
 	answers []any
 	calls   []claude.Call
+	// during runs while Claude works, before it answers.
+	during func()
 }
 
 func (f *fakeClaude) Do(_ context.Context, call claude.Call, into any, progress func(claude.Activity)) (claude.Run, error) {
 	f.calls = append(f.calls, call)
+	if f.during != nil {
+		f.during()
+	}
 	if len(f.answers) == 0 {
 		return claude.Run{}, errors.New("no answer left")
 	}
@@ -109,35 +115,64 @@ type memStore struct {
 	profiles    map[string]Profile
 }
 
-func (m *memStore) Load(key string) (Refinement, bool, error) {
+func (m *memStore) Load(ctx context.Context, key string) (Refinement, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return Refinement{}, false, err
+	}
 	r, ok := m.refinements[key]
 	data, _ := json.Marshal(r)
 	var copy Refinement
 	_ = json.Unmarshal(data, &copy)
 	return copy, ok, nil
 }
-func (m *memStore) All() ([]Refinement, error) {
+func (m *memStore) All(ctx context.Context) ([]Refinement, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var out []Refinement
 	for _, key := range slices.Sorted(maps.Keys(m.refinements)) {
 		out = append(out, m.refinements[key])
 	}
 	return out, nil
 }
-func (m *memStore) Save(r Refinement) error               { m.refinements[r.Key] = r; return nil }
-func (m *memStore) Delete(key string) error               { delete(m.refinements, key); return nil }
-func (m *memStore) Profiles() (map[string]Profile, error) { return maps.Clone(m.profiles), nil }
-func (m *memStore) SaveProfile(p Profile) error           { m.profiles[p.Repo] = p; return nil }
+func (m *memStore) Save(ctx context.Context, r Refinement) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.refinements[r.Key] = r
+	return nil
+}
+func (m *memStore) Delete(ctx context.Context, key string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	delete(m.refinements, key)
+	return nil
+}
+func (m *memStore) Profiles(ctx context.Context) (map[string]Profile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return maps.Clone(m.profiles), nil
+}
+func (m *memStore) SaveProfile(ctx context.Context, p Profile) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.profiles[p.Repo] = p
+	return nil
+}
 
 type fakeGit struct {
 	fail      map[string]bool
 	checkouts []string
 }
 
-func (g *fakeGit) Fetch(_ context.Context, name, dir string) gitsync.Status {
+func (g *fakeGit) Fetch(_ context.Context, name, dir string) (gitsync.Status, error) {
 	if g.fail[name] {
-		return gitsync.Status{Name: name, Dir: dir, Error: "could not reach origin"}
+		return gitsync.Status{Name: name, Dir: dir}, errors.New("could not reach origin")
 	}
-	return gitsync.Status{Name: name, Dir: dir, Branch: "develop", Commit: "abc123" + name, New: 2}
+	return gitsync.Status{Name: name, Dir: dir, Branch: "develop", Commit: "abc123" + name, New: 2}, nil
 }
 func (g *fakeGit) Checkout(_ context.Context, repo, commit, dest string) error {
 	g.checkouts = append(g.checkouts, commit+" "+dest)
@@ -152,6 +187,13 @@ func ticket(key, summary string, refined bool) jira.Ticket {
 	return t
 }
 
+// now is the clock setup gives the service.
+var now = time.Date(2026, 10, 26, 9, 30, 0, 0, time.UTC)
+
+type fakeRepos map[string]string
+
+func (r fakeRepos) List() map[string]string { return maps.Clone(r) }
+
 func setup() (*Service, *fakeJira, *fakeClaude, *memStore, *fakeGit) {
 	j := &fakeJira{tickets: map[string]jira.Ticket{
 		"GEEK-100": ticket("GEEK-100", "Integrate Stripe payments API", true),
@@ -163,10 +205,8 @@ func setup() (*Service, *fakeJira, *fakeClaude, *memStore, *fakeGit) {
 	st := &memStore{refinements: map[string]Refinement{}, profiles: map[string]Profile{}}
 	g := &fakeGit{fail: map[string]bool{}}
 	s := &Service{Jira: j, Claude: c, Store: st, Git: g, Sprint: "Refinement Ready - Team John", ReadySprint: "Ready for Sprint - Team John",
-		Repos: func() map[string]string {
-			return map[string]string{"admin": "/r/admin", "dating-backend": "/r/dating-backend", "costs": "/r/costs"}
-		},
-		Worktrees: "/w"}
+		Repos:     fakeRepos{"admin": "/r/admin", "dating-backend": "/r/dating-backend", "costs": "/r/costs"},
+		Worktrees: "/w", Now: func() time.Time { return now }}
 	return s, j, c, st, g
 }
 
@@ -205,7 +245,7 @@ func TestSearchKeepsOnlyListedTicketsAndCountsTheCost(t *testing.T) {
 	if !strings.Contains(j.jqls[0], `sprint in ("Refinement Ready - Team John", "Ready for Sprint - Team John") AND key != "GEEK-101"`) {
 		t.Errorf("jql = %s", j.jqls[0])
 	}
-	if r.CostUSD != 0.1 || r.Step != StepRelated {
+	if r.CostUSD != 0.1 || r.Step != StepRelated || !r.Updated.Equal(now) {
 		t.Errorf("refinement = %+v", r)
 	}
 }
@@ -217,7 +257,7 @@ func TestSearchAgainSendsTheExplanationAndKeepsDecisions(t *testing.T) {
 	if _, err := s.Search(ctx, "GEEK-101", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Decide("GEEK-101", "GEEK-100", Accepted); err != nil {
+	if _, err := s.Decide(ctx, "GEEK-101", "GEEK-100", Accepted); err != nil {
 		t.Fatal(err)
 	}
 	r, err := s.Search(ctx, "GEEK-101", "GEEK-131 also blocks this", nil)
@@ -229,16 +269,64 @@ func TestSearchAgainSendsTheExplanationAndKeepsDecisions(t *testing.T) {
 	}
 }
 
+func TestSearchKeepsADecisionMadeWhileItRuns(t *testing.T) {
+	s, _, c, _, _ := setup()
+	c.answers = []any{related, related}
+	ctx := context.Background()
+	if _, err := s.Search(ctx, "GEEK-101", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	c.during = func() {
+		if _, err := s.Decide(ctx, "GEEK-101", "GEEK-112", Rejected); err != nil {
+			t.Error(err)
+		}
+	}
+	r, err := s.Search(ctx, "GEEK-101", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Related.Blockers[1].Key != "GEEK-112" || r.Related.Blockers[1].Decision != Rejected {
+		t.Fatalf("related = %+v", r.Related)
+	}
+	saved, _, _ := s.Store.Load(ctx, "GEEK-101")
+	if saved.Related.Blockers[1].Decision != Rejected {
+		t.Fatalf("saved = %+v", saved.Related)
+	}
+}
+
+func TestSearchFailsWhenTheTicketMovedOnWhileItRan(t *testing.T) {
+	s, _, c, _, _ := setup()
+	c.answers = []any{related, related}
+	ctx := context.Background()
+	if _, err := s.Search(ctx, "GEEK-101", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	s.Decide(ctx, "GEEK-101", "GEEK-100", Rejected)
+	s.Decide(ctx, "GEEK-101", "GEEK-112", Rejected)
+	c.during = func() {
+		if _, err := s.Continue(ctx, "GEEK-101"); err != nil {
+			t.Error(err)
+		}
+	}
+	if _, err := s.Search(ctx, "GEEK-101", "", nil); !errors.Is(err, ErrStep) {
+		t.Fatalf("err = %v", err)
+	}
+	saved, _, _ := s.Store.Load(ctx, "GEEK-101")
+	if saved.Step != StepRepos {
+		t.Fatalf("saved = %+v", saved)
+	}
+}
+
 func TestContinueWaitsOnUnrefinedBlockersThenMovesOn(t *testing.T) {
 	s, j, c, _, _ := setup()
 	c.answers = []any{related}
 	ctx := context.Background()
 	s.Search(ctx, "GEEK-101", "", nil)
-	s.Decide("GEEK-101", "GEEK-100", Accepted)
+	s.Decide(ctx, "GEEK-101", "GEEK-100", Accepted)
 	if _, err := s.Continue(ctx, "GEEK-101"); err == nil || !strings.Contains(err.Error(), "1 more blocker") {
 		t.Fatalf("undecided: %v", err)
 	}
-	s.Decide("GEEK-101", "GEEK-112", Accepted)
+	s.Decide(ctx, "GEEK-101", "GEEK-112", Accepted)
 	r, err := s.Continue(ctx, "GEEK-101")
 	if err != nil {
 		t.Fatal(err)
@@ -265,8 +353,8 @@ func toRepos(t *testing.T, s *Service, c *fakeClaude) {
 	if _, err := s.Search(ctx, "GEEK-101", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	s.Decide("GEEK-101", "GEEK-100", Accepted)
-	s.Decide("GEEK-101", "GEEK-112", Rejected)
+	s.Decide(ctx, "GEEK-101", "GEEK-100", Accepted)
+	s.Decide(ctx, "GEEK-101", "GEEK-112", Rejected)
 	if r, err := s.Continue(ctx, "GEEK-101"); err != nil || r.Step != StepRepos {
 		t.Fatalf("continue: %+v %v", r, err)
 	}
@@ -276,16 +364,16 @@ func TestSyncBlocksOnAFailedFetch(t *testing.T) {
 	s, _, c, _, g := setup()
 	toRepos(t, s, c)
 	ctx := context.Background()
-	if _, err := s.SetRepos("GEEK-101", []string{"nope"}); err == nil {
+	if _, err := s.SetRepos(ctx, "GEEK-101", []string{"nope"}); err == nil {
 		t.Fatal("unknown repo accepted")
 	}
-	s.SetRepos("GEEK-101", []string{"dating-backend", "admin", "admin"})
+	s.SetRepos(ctx, "GEEK-101", []string{"dating-backend", "admin", "admin"})
 	g.fail["admin"] = true
 	r, err := s.Sync(ctx, "GEEK-101")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Step != StepRepos || len(r.Synced) != 2 || r.Synced[0].Repo != "admin" || r.Synced[1].Commit != "abc123dating-backend" || r.Synced[1].New != 2 || r.Synced[0].Error == "" {
+	if r.Step != StepRepos || len(r.Synced) != 2 || r.Synced[0].Repo != "admin" || r.Synced[1].Commit != "abc123dating-backend" || r.Synced[1].New != 2 || r.Synced[0].Error != "could not reach origin" {
 		t.Fatalf("blocked sync = %+v", r)
 	}
 	g.fail["admin"] = false
@@ -302,7 +390,7 @@ func question(text string, options ...string) map[string]any {
 func toQuestions(t *testing.T, s *Service, c *fakeClaude) {
 	t.Helper()
 	toRepos(t, s, c)
-	s.SetRepos("GEEK-101", []string{"dating-backend"})
+	s.SetRepos(context.Background(), "GEEK-101", []string{"dating-backend"})
 	if r, err := s.Sync(context.Background(), "GEEK-101"); err != nil || r.Step != StepQuestions {
 		t.Fatalf("sync: %+v %v", r, err)
 	}
@@ -345,7 +433,7 @@ func TestAskHoldsClaudeToTheLimitsAndEndsAfterTheLastRound(t *testing.T) {
 	if _, err := s.Ask(ctx, "GEEK-101", nil); err == nil {
 		t.Fatal("asked again with questions unanswered")
 	}
-	s.Answer("GEEK-101", Answers{Round: []string{"a", "b", "a", "b", "my own words"}})
+	s.Answer(ctx, "GEEK-101", Answers{Round: []string{"a", "b", "a", "b", "my own words"}})
 	r, err = s.Ask(ctx, "GEEK-101", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -353,12 +441,12 @@ func TestAskHoldsClaudeToTheLimitsAndEndsAfterTheLastRound(t *testing.T) {
 	if c.calls[2].Session != "s2" || !strings.Contains(c.calls[2].Prompt, `A: "my own words"`) || !strings.Contains(c.calls[2].Prompt, "round 2 of 3") {
 		t.Fatalf("round 2 call = %+v", c.calls[2])
 	}
-	s.Answer("GEEK-101", Answers{Round: []string{"x"}})
+	s.Answer(ctx, "GEEK-101", Answers{Round: []string{"x"}})
 	r, _ = s.Ask(ctx, "GEEK-101", nil)
 	if len(r.Rounds) != 3 || !strings.Contains(c.calls[3].Prompt, "last round") {
 		t.Fatalf("round 3 = %+v", r.Rounds)
 	}
-	s.Answer("GEEK-101", Answers{Round: []string{"y"}})
+	s.Answer(ctx, "GEEK-101", Answers{Round: []string{"y"}})
 	r, _ = s.Ask(ctx, "GEEK-101", nil)
 	if r.Step != StepDeploy || len(c.calls) != 4 {
 		t.Fatalf("after round 3: step %s, %d calls", r.Step, len(c.calls))
@@ -384,7 +472,7 @@ func TestRestartQuestionsAsksRoundOneFresh(t *testing.T) {
 	toQuestions(t, s, c)
 	ctx := context.Background()
 	s.Ask(ctx, "GEEK-101", nil)
-	r, err := s.RestartQuestions("GEEK-101")
+	r, err := s.RestartQuestions(ctx, "GEEK-101")
 	if err != nil || len(r.Rounds) != 0 || r.QuestionSession != "" {
 		t.Fatalf("restart: %+v %v", r, err)
 	}
@@ -398,18 +486,19 @@ func TestChooseReposDropsWhatClaudeReadAndPicksAgain(t *testing.T) {
 	s, _, c, _, _ := setup()
 	c.answers = []any{map[string]any{"questions": []map[string]any{question("Which?", "a", "b")}}}
 	toQuestions(t, s, c)
-	s.Ask(context.Background(), "GEEK-101", nil)
-	r, err := s.ChooseRepos("GEEK-101")
+	ctx := context.Background()
+	s.Ask(ctx, "GEEK-101", nil)
+	r, err := s.ChooseRepos(ctx, "GEEK-101")
 	if err != nil || r.Step != StepRepos || len(r.Rounds) != 0 || r.QuestionSession != "" || len(r.Synced) != 0 {
 		t.Fatalf("choose repos: %+v %v", r, err)
 	}
 	if !slices.Equal(r.Repos, []string{"dating-backend"}) {
 		t.Fatalf("picked repos should stay: %v", r.Repos)
 	}
-	if r, err = s.SetRepos("GEEK-101", []string{"admin"}); err != nil || !slices.Equal(r.Repos, []string{"admin"}) {
+	if r, err = s.SetRepos(ctx, "GEEK-101", []string{"admin"}); err != nil || !slices.Equal(r.Repos, []string{"admin"}) {
 		t.Fatalf("pick again: %+v %v", r, err)
 	}
-	if _, err := s.ChooseRepos("GEEK-101"); !errors.Is(err, ErrStep) {
+	if _, err := s.ChooseRepos(ctx, "GEEK-101"); !errors.Is(err, ErrStep) {
 		t.Fatalf("already at repos: %v", err)
 	}
 }
@@ -453,7 +542,7 @@ func toResults(t *testing.T, s *Service, c *fakeClaude) Refinement {
 	if _, err := s.Generate(ctx, "GEEK-101", nil); err == nil {
 		t.Fatal("generated with deploy questions unanswered")
 	}
-	s.Answer("GEEK-101", Answers{Repos: []string{"GitHub Actions"}, Ticket: []string{"This ticket"}})
+	s.Answer(ctx, "GEEK-101", Answers{Repos: []string{"GitHub Actions"}, Ticket: []string{"This ticket"}})
 	r, err = s.Generate(ctx, "GEEK-101", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -469,7 +558,7 @@ func TestGenerateSavesTheProfileAndScoresTheResult(t *testing.T) {
 		!slices.Equal(r.Result.AcceptanceCriteria, []string{"Support can refund a payment."}) {
 		t.Fatalf("result = %+v", r.Result)
 	}
-	if p := st.profiles["dating-backend"]; len(p.Answers) != 1 || p.Answers[0].Answer != "GitHub Actions" {
+	if p := st.profiles["dating-backend"]; len(p.Answers) != 1 || p.Answers[0].Answer != "GitHub Actions" || !p.Updated.Equal(now) {
 		t.Fatalf("profile = %+v", p)
 	}
 	gen := c.calls[len(c.calls)-1]
@@ -482,14 +571,25 @@ func TestGenerateSavesTheProfileAndScoresTheResult(t *testing.T) {
 	}
 }
 
+func TestSetProfileKeepsAnsweredQuestionsAndStampsTheTime(t *testing.T) {
+	s, _, _, st, _ := setup()
+	if err := s.SetProfile(context.Background(), Profile{Repo: "admin", Answers: []QA{{Question: " How? ", Answer: " Forge "}, {Question: "Who?"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if p := st.profiles["admin"]; !slices.Equal(p.Answers, []QA{{Question: "How?", Answer: "Forge"}}) || !p.Updated.Equal(now) {
+		t.Fatalf("profile = %+v", p)
+	}
+}
+
 func TestEditKeepsPointsInStepWithTheRatings(t *testing.T) {
+	ctx := context.Background()
 	s, _, c, _, _ := setup()
 	r := toResults(t, s, c)
 	edited := *r.Result
 	edited.Ratings.Novelty, edited.Ratings.Risk = "High", "High"
 	edited.Points = 99
 	edited.Split = []Child{{Title: "Refunds - Status and history", Points: 7}}
-	r, err := s.Edit("GEEK-101", edited)
+	r, err := s.Edit(ctx, "GEEK-101", edited)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -570,6 +670,11 @@ func TestStampWritesInOrderAndRetriesFromTheFailure(t *testing.T) {
 	}
 }
 
+// hiddenKeys hides the keys set to true.
+type hiddenKeys map[string]bool
+
+func (h hiddenKeys) Has(key string) bool { return h[key] }
+
 func TestListPinsStartedTicketsAndShowsBlocking(t *testing.T) {
 	s, j, c, _, _ := setup()
 	toRepos(t, s, c)
@@ -577,7 +682,7 @@ func TestListPinsStartedTicketsAndShowsBlocking(t *testing.T) {
 		{Type: "Blocks", Relation: "is blocked by", Key: "GEEK-101"},
 	}}
 	j.list = []string{"GEEK-140", "GEEK-100", "GEEK-112", "GEEK-101"}
-	s.Hidden = func(key string) bool { return key == "GEEK-112" }
+	s.Hidden = hiddenKeys{"GEEK-112": true}
 	page, err := s.List(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -614,14 +719,21 @@ func TestListReadsTheReadySprintWithPoints(t *testing.T) {
 }
 
 func TestPlanListsEveryJiraWrite(t *testing.T) {
-	r := Refinement{Key: "GEEK-1", Result: &Result{Points: 1, Split: []Child{{Title: "A - B"}}}}
+	r := Refinement{Key: "GEEK-1", Result: &Result{Points: 1, Split: []Child{{Title: "A - B"}, {Title: "A - C"}}}}
 	r.Related.Blockers = []Blocker{{Key: "GEEK-2", Decision: Accepted}, {Key: "GEEK-3", Decision: Rejected}}
-	var ids []string
+	var got []string
 	for _, a := range Plan(r) {
-		ids = append(ids, a.ID)
+		got = append(got, fmt.Sprintf("%s %d %d %s", a.ID, a.Kind, a.Index, a.Key))
 	}
-	if !slices.Equal(ids, []string{"write", "child:0", "link:GEEK-2", "move"}) {
-		t.Fatalf("plan = %v", ids)
+	want := []string{
+		fmt.Sprintf("write %d 0 ", ActionWrite),
+		fmt.Sprintf("child:0 %d 0 ", ActionChild),
+		fmt.Sprintf("child:1 %d 1 ", ActionChild),
+		fmt.Sprintf("link:GEEK-2 %d 0 GEEK-2", ActionLink),
+		fmt.Sprintf("move %d 0 ", ActionMove),
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("plan = %q", got)
 	}
 }
 
@@ -659,16 +771,16 @@ func TestBlockerFoundInTheCodeWaitsForTheDeveloper(t *testing.T) {
 	if len(pending) != 1 || pending[0].Key != "GEEK-119" || !pending[0].FromCode || len(r.Rounds) != 1 {
 		t.Fatalf("pending = %+v, rounds = %d", pending, len(r.Rounds))
 	}
-	s.Answer("GEEK-101", Answers{Round: []string{"a"}})
+	s.Answer(ctx, "GEEK-101", Answers{Round: []string{"a"}})
 	if _, err := s.Ask(ctx, "GEEK-101", nil); err == nil || !strings.Contains(err.Error(), "GEEK-119") {
 		t.Fatalf("asked on with a pending blocker: %v", err)
 	}
-	if _, err := s.Decide("GEEK-101", "GEEK-100", Rejected); err == nil {
+	if _, err := s.Decide(ctx, "GEEK-101", "GEEK-100", Rejected); err == nil {
 		t.Fatal("changed a blocker decided in the related step")
 	}
 
 	// Accepting it goes back through the related step and starts the questions over.
-	r, err = s.Decide("GEEK-101", "GEEK-119", Accepted)
+	r, err = s.Decide(ctx, "GEEK-101", "GEEK-119", Accepted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -693,7 +805,7 @@ func TestRejectingABlockerFoundInTheCodeCarriesOn(t *testing.T) {
 	if err != nil || r.Step != StepQuestions || len(r.Rounds) != 0 {
 		t.Fatalf("a round with only a blocker stays on questions: %+v %v", r, err)
 	}
-	s.Decide("GEEK-101", "GEEK-119", Rejected)
+	s.Decide(ctx, "GEEK-101", "GEEK-119", Rejected)
 	r, err = s.Ask(ctx, "GEEK-101", nil)
 	if err != nil || len(r.Rounds) != 1 {
 		t.Fatalf("after rejecting: %+v %v", r, err)
@@ -735,7 +847,7 @@ func TestSuggestMatchesTitleAndLabelsToRepoNamesOnce(t *testing.T) {
 
 	// A repo a related ticket picked comes first and is not repeated.
 	st.refinements["GEEK-100"] = Refinement{Key: "GEEK-100", Repos: []string{"dating-backend"}}
-	v, err := s.Describe("GEEK-101")
+	v, err := s.Describe(ctx, "GEEK-101")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -770,5 +882,63 @@ func TestSyncedReadsRecordsSavedBeforeItHadItsOwnType(t *testing.T) {
 	}
 	if _, ok := r.Commit("api"); ok {
 		t.Fatal("failed sync has a commit")
+	}
+}
+
+func TestViewSendsEmptyListsNotNull(t *testing.T) {
+	s, _, _, _, _ := setup()
+	v, err := s.Open(context.Background(), "GEEK-101")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "null") {
+		t.Errorf("view has null: %s", data)
+	}
+}
+
+func TestClaudeQuestionDecodesAndConverts(t *testing.T) {
+	var q claudeQuestion
+	if err := json.Unmarshal([]byte(`{"question":"Which store?","options":["Redis","Postgres"],"recommended":1,"why":"Already deployed"}`), &q); err != nil {
+		t.Fatal(err)
+	}
+	got := q.toQuestion()
+	want := Question{Text: "Which store?", Options: []string{"Redis", "Postgres"}, Recommended: 1, Why: "Already deployed"}
+	if got.Text != want.Text || !slices.Equal(got.Options, want.Options) || got.Recommended != want.Recommended || got.Why != want.Why {
+		t.Errorf("toQuestion = %+v, want %+v", got, want)
+	}
+}
+
+func TestACancelledContextStopsTheChange(t *testing.T) {
+	s, _, c, st, _ := setup()
+	c.answers = []any{related}
+	ctx := context.Background()
+	s.Search(ctx, "GEEK-101", "", nil)
+
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := s.Decide(cancelled, "GEEK-101", "GEEK-100", Accepted); !errors.Is(err, context.Canceled) {
+		t.Errorf("decide = %v", err)
+	}
+	if b := st.refinements["GEEK-101"].Related.Blockers; b[0].Decision != "" {
+		t.Errorf("decided anyway: %+v", b)
+	}
+	if _, err := s.Describe(cancelled, "GEEK-101"); !errors.Is(err, context.Canceled) {
+		t.Errorf("describe = %v", err)
+	}
+	if err := s.Reset(cancelled, "GEEK-101"); !errors.Is(err, context.Canceled) {
+		t.Errorf("reset = %v", err)
+	}
+	if _, ok := st.refinements["GEEK-101"]; !ok {
+		t.Error("reset anyway")
+	}
+	if err := s.SetProfile(cancelled, Profile{Repo: "admin", Answers: []QA{{Question: "How?", Answer: "Forge"}}}); !errors.Is(err, context.Canceled) {
+		t.Errorf("set profile = %v", err)
+	}
+	if _, err := s.Profiles(cancelled); !errors.Is(err, context.Canceled) {
+		t.Errorf("profiles = %v", err)
 	}
 }

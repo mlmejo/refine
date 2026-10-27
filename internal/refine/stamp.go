@@ -5,15 +5,29 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
-	"strings"
 
 	"github.com/mlmejo/refine/internal/jira"
 )
 
-// Action is one write to Jira when stamping.
+// ActionKind is which Jira write an action makes.
+type ActionKind int
+
+const (
+	ActionWrite ActionKind = iota
+	ActionComment
+	ActionChild
+	ActionLink
+	ActionMove
+)
+
+// Action is one write to Jira when stamping. ID is what the stamp records
+// as done; Index and Key say which split ticket or blocker it is for.
 type Action struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
+	ID    string     `json:"id"`
+	Label string     `json:"label"`
+	Kind  ActionKind `json:"-"`
+	Index int        `json:"-"`
+	Key   string     `json:"-"`
 }
 
 // Plan lists the Jira writes a stamp makes, in order: the fields, the deploy
@@ -23,49 +37,48 @@ func Plan(r Refinement) []Action {
 		return nil
 	}
 	res := r.Result
-	plan := []Action{{ID: "write", Label: fmt.Sprintf("Write Acceptance Criteria, Technical Implementation and %d point%s to %s", res.Points, plural(res.Points), r.Key)}}
+	plan := []Action{{ID: "write", Kind: ActionWrite, Label: fmt.Sprintf("Write Acceptance Criteria, Technical Implementation and %d point%s to %s", res.Points, plural(res.Points), r.Key)}}
 	if len(res.DeployNeeds) > 0 {
-		plan = append(plan, Action{ID: "comment", Label: fmt.Sprintf("Comment %d deploy need%s on %s", len(res.DeployNeeds), plural(len(res.DeployNeeds)), r.Key)})
+		plan = append(plan, Action{ID: "comment", Kind: ActionComment, Label: fmt.Sprintf("Comment %d deploy need%s on %s", len(res.DeployNeeds), plural(len(res.DeployNeeds)), r.Key)})
 	}
 	for i, c := range res.Split {
-		plan = append(plan, Action{ID: "child:" + strconv.Itoa(i), Label: fmt.Sprintf("Create %q in Ready for Sprint, related to %s", c.Title, r.Key)})
+		plan = append(plan, Action{ID: "child:" + strconv.Itoa(i), Kind: ActionChild, Index: i, Label: fmt.Sprintf("Create %q in Ready for Sprint, related to %s", c.Title, r.Key)})
 	}
 	for _, b := range r.Related.Accepted() {
-		plan = append(plan, Action{ID: "link:" + b.Key, Label: fmt.Sprintf("Link %s relates to %s", b.Key, r.Key)})
+		plan = append(plan, Action{ID: "link:" + b.Key, Kind: ActionLink, Key: b.Key, Label: fmt.Sprintf("Link %s relates to %s", b.Key, r.Key)})
 	}
-	return append(plan, Action{ID: "move", Label: fmt.Sprintf("Move %s to Ready for Sprint", r.Key)})
+	return append(plan, Action{ID: "move", Kind: ActionMove, Label: fmt.Sprintf("Move %s to Ready for Sprint", r.Key)})
 }
 
 // Stamp writes the result to Jira, one action at a time, and records each as
 // it finishes. A retry skips the actions already done. Once all are done the
 // ticket is stamped.
 func (s *Service) Stamp(ctx context.Context, key string) (Refinement, error) {
-	r, ok, err := s.Store.Load(key)
+	r, ok, err := s.Store.Load(ctx, key)
 	if err != nil {
 		return Refinement{}, err
 	}
 	if !ok || r.Step != StepResults || r.Result == nil {
 		return Refinement{}, fmt.Errorf("stamp: %w", ErrStep)
 	}
-	var target *jira.SplitTarget
-	for _, action := range Plan(r) {
-		if slices.Contains(r.Stamp.Done, action.ID) {
+	st := &stamper{s: s, r: r}
+	for _, a := range Plan(r) {
+		if slices.Contains(r.Stamp.Done, a.ID) {
 			continue
 		}
-		child, err := s.act(ctx, r, action.ID, &target)
-		r, err = s.update(key, func(r *Refinement) error {
+		child, actErr := st.act(ctx, a)
+		r, err = s.update(ctx, key, func(r *Refinement) error {
 			if child != "" {
 				if r.Stamp.Children == nil {
 					r.Stamp.Children = map[int]string{}
 				}
-				i, _ := strconv.Atoi(strings.TrimPrefix(action.ID, "child:"))
-				r.Stamp.Children[i] = child
+				r.Stamp.Children[a.Index] = child
 			}
-			if err != nil {
-				r.Stamp.Failed, r.Stamp.Error = action.ID, err.Error()
+			if actErr != nil {
+				r.Stamp.Failed, r.Stamp.Error = a.ID, actErr.Error()
 				return nil
 			}
-			r.Stamp.Done = append(r.Stamp.Done, action.ID)
+			r.Stamp.Done = append(r.Stamp.Done, a.ID)
 			r.Stamp.Failed, r.Stamp.Error = "", ""
 			return nil
 		})
@@ -76,47 +89,67 @@ func (s *Service) Stamp(ctx context.Context, key string) (Refinement, error) {
 			return r, nil
 		}
 	}
-	return s.update(key, func(r *Refinement) error {
+	return s.update(ctx, key, func(r *Refinement) error {
 		r.Step = StepStamped
 		return nil
 	})
 }
 
+// stamper runs the actions of one stamp. It keeps the split target, made
+// on the first split ticket, for the ones after it.
+type stamper struct {
+	s      *Service
+	r      Refinement
+	target *jira.SplitTarget
+}
+
 // act runs one stamp action. A created split ticket's key comes back even
 // when part of its creation failed, so it is not created twice.
-func (s *Service) act(ctx context.Context, r Refinement, id string, target **jira.SplitTarget) (string, error) {
+func (st *stamper) act(ctx context.Context, a Action) (string, error) {
+	s, r := st.s, st.r
 	res := r.Result
-	switch {
-	case id == "write":
+	switch a.Kind {
+	case ActionWrite:
 		return "", s.Jira.Update(ctx, r.Key, fields(res.AcceptanceCriteria, res.TechnicalImplementation, res.Decisions, res.Ratings, res.Points))
-	case id == "comment":
+	case ActionComment:
 		body := jira.DeployComment(res.DeployNeeds)
-		t, err := s.Jira.GetTicket(ctx, r.Key)
+		t, err := s.Jira.Ticket(ctx, r.Key)
 		if err != nil || t.HasComment(body) {
 			return "", err
 		}
 		return "", s.Jira.Comment(ctx, r.Key, body)
-	case strings.HasPrefix(id, "child:"):
-		i, _ := strconv.Atoi(strings.TrimPrefix(id, "child:"))
-		if *target == nil {
-			t, err := s.Jira.Split(ctx, r.Key, s.ReadySprint)
-			if err != nil {
-				return "", err
-			}
-			*target = &t
+	case ActionChild:
+		if a.Index < 0 || a.Index >= len(res.Split) {
+			return "", fmt.Errorf("no split ticket %d", a.Index)
 		}
-		c := res.Split[i]
-		return s.Jira.CreateChild(ctx, **target, jira.NewChild{
+		target, err := st.splitTarget(ctx)
+		if err != nil {
+			return "", err
+		}
+		c := res.Split[a.Index]
+		return s.Jira.CreateChild(ctx, target, jira.NewChild{
 			Summary:     c.Title,
 			Description: fmt.Sprintf("Split from %s (%s), which holds the foundation this builds on.", r.Key, r.Summary),
 			Refinement:  fields(c.AcceptanceCriteria, c.TechnicalImplementation, c.Decisions, c.Ratings, c.Points),
 		})
-	case strings.HasPrefix(id, "link:"):
-		return "", s.Jira.Relate(ctx, r.Key, strings.TrimPrefix(id, "link:"))
-	case id == "move":
+	case ActionLink:
+		return "", s.Jira.Relate(ctx, r.Key, a.Key)
+	case ActionMove:
 		return "", s.Jira.MoveToSprint(ctx, r.Key, s.ReadySprint)
 	}
-	return "", fmt.Errorf("unknown stamp action %q", id)
+	return "", fmt.Errorf("unknown stamp action %q", a.ID)
+}
+
+// splitTarget is where split tickets go, asked of Jira once per stamp.
+func (st *stamper) splitTarget(ctx context.Context) (jira.SplitTarget, error) {
+	if st.target == nil {
+		t, err := st.s.Jira.Split(ctx, st.r.Key, st.s.ReadySprint)
+		if err != nil {
+			return jira.SplitTarget{}, err
+		}
+		st.target = &t
+	}
+	return *st.target, nil
 }
 
 // fields is a ticket's refinement as Jira's fields take it.
