@@ -3,7 +3,9 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -144,5 +146,79 @@ func TestAddRepoAddsTheTable(t *testing.T) {
 	data, _ := os.ReadFile(path)
 	if want := "[jira]\nsite = \"s\"\n\n[repos]\ndating = \"/abs/dating\"\n"; string(data) != want {
 		t.Errorf("file =\n%s", data)
+	}
+}
+
+func TestReposListsAddsAndRemoves(t *testing.T) {
+	path := write(t, "[jira]\nsite = \"s\"\n\n[repos]\nadmin = \"/r/admin\"\n")
+	repos := NewRepos(path, map[string]string{"admin": "/r/admin"})
+
+	list := repos.List()
+	list["leak"] = "/x"
+	if _, ok := repos.List()["leak"]; ok {
+		t.Fatal("List should return a copy")
+	}
+	if err := repos.Add("costs", "/r/costs"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repos.Add("costs", "/r/costs"); err == nil {
+		t.Error("adding a listed repo should fail")
+	}
+	if err := repos.Remove("admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repos.Remove("admin"); err == nil {
+		t.Error("removing an unlisted repo should fail")
+	}
+	if got := repos.List(); len(got) != 1 || got["costs"] != "/r/costs" {
+		t.Errorf("repos = %v", got)
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), `costs = "/r/costs"`) || strings.Contains(string(data), "admin") {
+		t.Errorf("file = %s", data)
+	}
+}
+
+func TestReposNilMap(t *testing.T) {
+	path := write(t, "[jira]\nsite = \"s\"\n")
+	repos := NewRepos(path, nil)
+	if err := repos.Add("admin", "/r/admin"); err != nil {
+		t.Fatal(err)
+	}
+	if got := repos.List(); got["admin"] != "/r/admin" {
+		t.Errorf("repos = %v", got)
+	}
+}
+
+// Run with -race: Add and Remove change the map while List reads it.
+func TestReposConcurrentAccess(t *testing.T) {
+	path := write(t, "[jira]\nsite = \"s\"\n")
+	repos := NewRepos(path, nil)
+	var wg sync.WaitGroup
+	for i := range 4 {
+		name := "repo" + strconv.Itoa(i)
+		wg.Go(func() {
+			for range 20 {
+				if err := repos.Add(name, "/r/"+name); err != nil {
+					t.Error(err)
+					return
+				}
+				if err := repos.Remove(name); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		})
+		wg.Go(func() {
+			for range 200 {
+				for n, dir := range repos.List() {
+					_ = n + dir
+				}
+			}
+		})
+	}
+	wg.Wait()
+	if got := repos.List(); len(got) != 0 {
+		t.Errorf("repos = %v", got)
 	}
 }

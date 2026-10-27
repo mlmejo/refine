@@ -27,11 +27,12 @@ import (
 	"github.com/mlmejo/refine/internal/version"
 )
 
-// Repos reads and changes the configured repos.
-type Repos struct {
-	List   func() map[string]string
-	Add    func(name, dir string) error
-	Remove func(name string) error
+// Repos reads and changes the configured repos. List returns a map the
+// caller may keep.
+type Repos interface {
+	List() map[string]string
+	Add(name, dir string) error
+	Remove(name string) error
 }
 
 // Info is what the app shows about this refine.
@@ -42,37 +43,36 @@ type Info struct {
 	ReadySprint string `json:"ready_sprint"`
 }
 
+// Hider hides and unhides tickets in the list.
+type Hider interface {
+	Set(key string, hide bool) error
+}
+
 // Server answers the desktop app. Every request needs the token.
 type Server struct {
-	Info    Info
-	Service *refine.Service
-	Repos   Repos
-	// SaveHidden keeps the hidden ticket keys.
-	SaveHidden func(keys []string) error
-	Token      string
+	about   Info
+	service *refine.Service
+	config  Repos
+	hidden  Hider
+	token   string
 
 	mu     sync.Mutex
-	hidden map[string]bool
 	job    *job
 	nextID int
+	// stamping holds the tickets being written to Jira.
+	stamping map[string]bool
 }
 
-// New returns a server with a fresh random token. hidden are the keys
-// already hidden from the list.
-func New(info Info, service *refine.Service, repos Repos, hidden []string, saveHidden func([]string) error) *Server {
+// New returns a server with a fresh random token. hidden is the set the
+// service reads when it lists tickets.
+func New(info Info, service *refine.Service, repos Repos, hidden Hider) *Server {
 	token := make([]byte, 24)
 	_, _ = rand.Read(token)
-	s := &Server{Info: info, Service: service, Repos: repos, SaveHidden: saveHidden, Token: hex.EncodeToString(token), hidden: map[string]bool{}}
-	for _, key := range hidden {
-		s.hidden[key] = true
-	}
-	service.Hidden = func(key string) bool {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		return s.hidden[key]
-	}
-	return s
+	return &Server{about: info, service: service, config: repos, hidden: hidden, token: hex.EncodeToString(token), stamping: map[string]bool{}}
 }
+
+// Token is what every request sends as "Authorization: Bearer <token>".
+func (s *Server) Token() string { return s.token }
 
 // Handler routes the API.
 func (s *Server) Handler() http.Handler {
@@ -85,7 +85,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tickets/{key}", s.open)
 	mux.HandleFunc("DELETE /api/tickets/{key}", s.reset)
 	mux.HandleFunc("PUT /api/tickets/{key}/decisions", s.decide)
-	mux.HandleFunc("POST /api/tickets/{key}/continue", s.continue_)
+	mux.HandleFunc("POST /api/tickets/{key}/continue", s.advance)
 	mux.HandleFunc("PUT /api/tickets/{key}/repos", s.setRepos)
 	mux.HandleFunc("POST /api/tickets/{key}/suggestion", s.suggest)
 	mux.HandleFunc("DELETE /api/tickets/{key}/sync", s.chooseRepos)
@@ -110,7 +110,7 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) auth(next http.Handler) http.Handler {
-	want := []byte("Bearer " + s.Token)
+	want := []byte("Bearer " + s.token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {
 			fail(w, http.StatusUnauthorized, errors.New("bad token"))
@@ -150,10 +150,10 @@ func decode(w http.ResponseWriter, r *http.Request, into any) bool {
 
 func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 	reply(w, map[string]any{
-		"site":          s.Info.Site,
-		"project":       s.Info.Project,
-		"sprint":        s.Info.Sprint,
-		"ready_sprint":  s.Info.ReadySprint,
+		"site":          s.about.Site,
+		"project":       s.about.Project,
+		"sprint":        s.about.Sprint,
+		"ready_sprint":  s.about.ReadySprint,
 		"max_rounds":    refine.MaxRounds,
 		"max_questions": refine.MaxQuestions,
 		"build":         version.Build(),
@@ -162,7 +162,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) tickets(w http.ResponseWriter, r *http.Request) {
-	page, err := s.Service.List(r.Context())
+	page, err := s.service.List(r.Context())
 	if err != nil {
 		fail(w, http.StatusBadGateway, err)
 		return
@@ -172,12 +172,12 @@ func (s *Server) tickets(w http.ResponseWriter, r *http.Request) {
 
 // lookup reads a ticket key, or a number in the project, and unhides it.
 func (s *Server) lookup(w http.ResponseWriter, r *http.Request) {
-	key, ok := jira.ParseKey(r.URL.Query().Get("q"), s.Info.Project)
+	key, ok := jira.ParseKey(r.URL.Query().Get("q"), s.about.Project)
 	if !ok {
 		fail(w, http.StatusBadRequest, errors.New("not a ticket key"))
 		return
 	}
-	if err := s.setHidden(key, false); err != nil {
+	if err := s.hidden.Set(key, false); err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -186,7 +186,7 @@ func (s *Server) lookup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) hide(hide bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := s.setHidden(r.PathValue("key"), hide); err != nil {
+		if err := s.hidden.Set(r.PathValue("key"), hide); err != nil {
 			fail(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -194,27 +194,15 @@ func (s *Server) hide(hide bool) http.HandlerFunc {
 	}
 }
 
-func (s *Server) setHidden(key string, hide bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.hidden[key] == hide {
-		return nil
-	}
-	if hide {
-		s.hidden[key] = true
-	} else {
-		delete(s.hidden, key)
-	}
-	if s.SaveHidden == nil {
-		return nil
-	}
-	return s.SaveHidden(slices.Sorted(maps.Keys(s.hidden)))
-}
-
 // open reads a ticket and its refinement, or the start of one.
 func (s *Server) open(w http.ResponseWriter, r *http.Request) {
-	view, err := s.Service.Open(r.Context(), r.PathValue("key"))
+	view, err := s.service.Open(r.Context(), r.PathValue("key"))
 	if err != nil {
+		var apiErr *jira.APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			fail(w, http.StatusNotFound, err)
+			return
+		}
 		fail(w, http.StatusBadGateway, err)
 		return
 	}
@@ -222,12 +210,12 @@ func (s *Server) open(w http.ResponseWriter, r *http.Request) {
 }
 
 // describe replies with the refinement after a change.
-func (s *Server) describe(w http.ResponseWriter, key string, err error) {
+func (s *Server) describe(ctx context.Context, w http.ResponseWriter, key string, err error) {
 	if err != nil {
 		failFor(w, err)
 		return
 	}
-	view, err := s.Service.Describe(key)
+	view, err := s.service.Describe(ctx, key)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
@@ -240,7 +228,7 @@ func (s *Server) reset(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, errors.New("cancel the running step first"))
 		return
 	}
-	if err := s.Service.Reset(r.PathValue("key")); err != nil {
+	if err := s.service.Reset(r.Context(), r.PathValue("key")); err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -256,26 +244,26 @@ func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	_, err := s.Service.Decide(key, body.Blocker, body.Decision)
-	s.describe(w, key, err)
+	_, err := s.service.Decide(r.Context(), key, body.Blocker, body.Decision)
+	s.describe(r.Context(), w, key, err)
 }
 
-func (s *Server) continue_(w http.ResponseWriter, r *http.Request) {
+func (s *Server) advance(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	_, err := s.Service.Continue(r.Context(), key)
-	s.describe(w, key, err)
+	_, err := s.service.Continue(r.Context(), key)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) restartQuestions(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	_, err := s.Service.RestartQuestions(key)
-	s.describe(w, key, err)
+	_, err := s.service.RestartQuestions(r.Context(), key)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) chooseRepos(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	_, err := s.Service.ChooseRepos(key)
-	s.describe(w, key, err)
+	_, err := s.service.ChooseRepos(r.Context(), key)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) setRepos(w http.ResponseWriter, r *http.Request) {
@@ -286,20 +274,20 @@ func (s *Server) setRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	_, err := s.Service.SetRepos(key, body.Repos)
-	s.describe(w, key, err)
+	_, err := s.service.SetRepos(r.Context(), key, body.Repos)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) suggest(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	_, err := s.Service.Suggest(r.Context(), key)
-	s.describe(w, key, err)
+	_, err := s.service.Suggest(r.Context(), key)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) sync(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	_, err := s.Service.Sync(r.Context(), key)
-	s.describe(w, key, err)
+	_, err := s.service.Sync(r.Context(), key)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) answers(w http.ResponseWriter, r *http.Request) {
@@ -308,8 +296,8 @@ func (s *Server) answers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	_, err := s.Service.Answer(key, body)
-	s.describe(w, key, err)
+	_, err := s.service.Answer(r.Context(), key, body)
+	s.describe(r.Context(), w, key, err)
 }
 
 func (s *Server) edit(w http.ResponseWriter, r *http.Request) {
@@ -318,20 +306,28 @@ func (s *Server) edit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	_, err := s.Service.Edit(key, body)
-	s.describe(w, key, err)
+	_, err := s.service.Edit(r.Context(), key, body)
+	s.describe(r.Context(), w, key, err)
 }
+
+// stampTimeout bounds one stamp's Jira writes.
+const stampTimeout = 2 * time.Minute
 
 // stamp writes to Jira. A failed action comes back in the refinement's
 // stamp progress, not as an error, so the app can offer a retry.
 func (s *Server) stamp(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	if s.busy(key) {
+	if !s.claim(key) {
 		fail(w, http.StatusConflict, errors.New("a step is running on this ticket"))
 		return
 	}
-	_, err := s.Service.Stamp(r.Context(), key)
-	s.describe(w, key, err)
+	defer s.release(key)
+	// The Jira writes must not stop halfway because the app dropped the
+	// request: a create cut off mid-flight may still have made the ticket.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), stampTimeout)
+	defer cancel()
+	_, err := s.service.Stamp(ctx, key)
+	s.describe(ctx, w, key, err)
 }
 
 type repo struct {
@@ -340,8 +336,8 @@ type repo struct {
 }
 
 func (s *Server) repos(w http.ResponseWriter, r *http.Request) {
-	all := s.Repos.List()
-	profiles, err := s.Service.Profiles()
+	all := s.config.List()
+	profiles, err := s.service.Profiles(r.Context())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
@@ -379,7 +375,7 @@ func (s *Server) addRepo(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, fmt.Errorf("%s is not a git repo", body.Dir))
 		return
 	}
-	if err := s.Repos.Add(body.Name, filepath.Clean(body.Dir)); err != nil {
+	if err := s.config.Add(body.Name, filepath.Clean(body.Dir)); err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
@@ -387,7 +383,7 @@ func (s *Server) addRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) removeRepo(w http.ResponseWriter, r *http.Request) {
-	if err := s.Repos.Remove(r.PathValue("name")); err != nil {
+	if err := s.config.Remove(r.PathValue("name")); err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
@@ -397,7 +393,7 @@ func (s *Server) removeRepo(w http.ResponseWriter, r *http.Request) {
 // scan lists the git checkouts at or under a folder, with the names they
 // would be added as.
 func (s *Server) scan(w http.ResponseWriter, r *http.Request) {
-	found, err := reposcan.Scan(r.URL.Query().Get("dir"), s.Repos.List())
+	found, err := reposcan.Scan(r.URL.Query().Get("dir"), s.config.List())
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
@@ -410,7 +406,7 @@ func (s *Server) scan(w http.ResponseWriter, r *http.Request) {
 func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
 	count := map[string]int{}
 	best := ""
-	all := s.Repos.List()
+	all := s.config.List()
 	for _, name := range slices.Sorted(maps.Keys(all)) {
 		parent := filepath.Dir(all[name])
 		count[parent]++
@@ -432,11 +428,11 @@ func (s *Server) setProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("repo")
-	if _, ok := s.Repos.List()[name]; !ok {
+	if _, ok := s.config.List()[name]; !ok {
 		fail(w, http.StatusNotFound, fmt.Errorf("no repo named %s", name))
 		return
 	}
-	if err := s.Service.SetProfile(refine.Profile{Repo: name, Answers: body.Answers}); err != nil {
+	if err := s.service.SetProfile(r.Context(), refine.Profile{Repo: name, Answers: body.Answers}); err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -452,12 +448,12 @@ func (s *Server) format(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, fmt.Errorf("no format %q", f))
 		return
 	}
-	text, err := s.Service.Format(f)
+	text, err := s.service.Format(f)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
-	reply(w, map[string]any{"path": s.Service.FormatPath(f), "custom": strings.TrimSpace(text) != strings.TrimSpace(def)})
+	reply(w, map[string]any{"path": s.service.FormatPath(f), "custom": strings.TrimSpace(text) != strings.TrimSpace(def)})
 }
 
 // setFormat takes a field's uploaded rules, or puts the defaults back.
@@ -479,7 +475,7 @@ func (s *Server) setFormat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.Service.SetFormat(f, body.Text); err != nil {
+	if err := s.service.SetFormat(f, body.Text); err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -499,6 +495,7 @@ type job struct {
 	Log     []claude.Activity `json:"log"`
 
 	cancel context.CancelFunc
+	done   chan struct{} // closed when the run's goroutine ends
 }
 
 // jobKind is what a job asks Claude to do.
@@ -513,19 +510,44 @@ const (
 	kindRewrite  jobKind = "rewrite"
 )
 
-// Close cancels the running job, so its Claude run stops with the server.
+// Close cancels the running job and waits for it to end, so its Claude run
+// stops before the store closes.
 func (s *Server) Close() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.job != nil {
-		s.job.cancel()
+	j := s.job
+	s.mu.Unlock()
+	if j != nil {
+		j.cancel()
+		<-j.done
 	}
 }
 
+// busy reports whether a job or a stamp is running on the ticket.
 func (s *Server) busy(key string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.job != nil && !s.job.Done && s.job.Key == key
+	return s.busyLocked(key)
+}
+
+func (s *Server) busyLocked(key string) bool {
+	return s.stamping[key] || s.job != nil && !s.job.Done && s.job.Key == key
+}
+
+// claim marks the ticket as stamping, unless something runs on it already.
+func (s *Server) claim(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.busyLocked(key) {
+		return false
+	}
+	s.stamping[key] = true
+	return true
+}
+
+func (s *Server) release(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.stamping, key)
 }
 
 // currentJob replies with the running job, or the last one until the app
@@ -542,13 +564,21 @@ func (s *Server) currentJob(w http.ResponseWriter, r *http.Request) {
 	reply(w, out)
 }
 
+// cancelJob cancels the job and waits for it to end before clearing it, so
+// no new run starts while the old one is still unwinding.
 func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	if s.job != nil && s.job.ID == r.PathValue("id") {
-		s.job.cancel()
-		s.job = nil
-	}
+	j := s.job
 	s.mu.Unlock()
+	if j != nil && j.ID == r.PathValue("id") {
+		j.cancel()
+		<-j.done
+		s.mu.Lock()
+		if s.job == j {
+			s.job = nil
+		}
+		s.mu.Unlock()
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -566,27 +596,27 @@ func (s *Server) startJob(w http.ResponseWriter, r *http.Request) {
 	switch body.Kind {
 	case kindSearch:
 		work = func(ctx context.Context, p func(claude.Activity)) error {
-			_, err := s.Service.Search(ctx, body.Key, body.Explanation, p)
+			_, err := s.service.Search(ctx, body.Key, body.Explanation, p)
 			return err
 		}
 	case kindAsk:
 		work = func(ctx context.Context, p func(claude.Activity)) error {
-			_, err := s.Service.Ask(ctx, body.Key, p)
+			_, err := s.service.Ask(ctx, body.Key, p)
 			return err
 		}
 	case kindDeploy:
 		work = func(ctx context.Context, p func(claude.Activity)) error {
-			_, err := s.Service.AskDeploy(ctx, body.Key, p)
+			_, err := s.service.AskDeploy(ctx, body.Key, p)
 			return err
 		}
 	case kindGenerate:
 		work = func(ctx context.Context, p func(claude.Activity)) error {
-			_, err := s.Service.Generate(ctx, body.Key, p)
+			_, err := s.service.Generate(ctx, body.Key, p)
 			return err
 		}
 	case kindRewrite:
 		work = func(ctx context.Context, p func(claude.Activity)) error {
-			_, err := s.Service.Rewrite(ctx, body.Key, p)
+			_, err := s.service.Rewrite(ctx, body.Key, p)
 			return err
 		}
 	default:
@@ -598,17 +628,23 @@ func (s *Server) startJob(w http.ResponseWriter, r *http.Request) {
 	if s.job != nil && !s.job.Done {
 		running := *s.job
 		s.mu.Unlock()
-		fail(w, http.StatusConflict, fmt.Errorf("Claude is already working on %s", running.Key))
+		fail(w, http.StatusConflict, fmt.Errorf("Claude is already working on %s", running.Key)) //nolint:staticcheck // ST1005: Claude is a name.
+		return
+	}
+	if s.stamping[body.Key] {
+		s.mu.Unlock()
+		fail(w, http.StatusConflict, fmt.Errorf("%s is being stamped", body.Key))
 		return
 	}
 	s.nextID++
 	ctx, cancel := context.WithCancel(context.Background())
-	j := &job{ID: strconv.Itoa(s.nextID), Kind: body.Kind, Key: body.Key, Started: time.Now(), Log: []claude.Activity{}, cancel: cancel}
+	j := &job{ID: strconv.Itoa(s.nextID), Kind: body.Kind, Key: body.Key, Started: time.Now(), Log: []claude.Activity{}, cancel: cancel, done: make(chan struct{})}
 	s.job = j
 	out := *j
 	s.mu.Unlock()
 
 	go func() {
+		defer close(j.done)
 		defer cancel()
 		err := work(ctx, func(a claude.Activity) {
 			s.mu.Lock()

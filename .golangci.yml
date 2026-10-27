@@ -1,0 +1,44 @@
+version: "2"
+
+linters:
+  # standard: errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    - misspell
+    - unconvert
+    # unparam flags parameters that always get the same value and results
+    # no caller uses.
+    - unparam
+  settings:
+    errcheck:
+      exclude-functions:
+        # Deferred Rollback after Commit is a no-op that returns ErrTxDone.
+        - (*database/sql.Tx).Rollback
+    staticcheck:
+      checks:
+        - all
+        # Defaults staticcheck leaves off.
+        - -ST1000
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        # De Morgan's law rarely reads better than a list of allowed ranges.
+        - -QF1001
+    unparam:
+      # Exported functions too: Checkout's fetch flag was exported.
+      check-exported: true
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      # Test handlers ignore w.Write errors and helpers take fixed fixtures.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - unparam
+
+formatters:
+  enable:
+    - gofmt
