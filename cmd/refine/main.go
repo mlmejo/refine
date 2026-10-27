@@ -6,11 +6,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/mlmejo/refine/internal/app"
 	"github.com/mlmejo/refine/internal/refine"
@@ -31,7 +33,7 @@ func main() {
 	}
 }
 
-func run(args []string) error {
+func run(args []string) (err error) {
 	if len(args) == 0 {
 		fmt.Print(usage)
 		return nil
@@ -46,7 +48,7 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		defer a.Close()
+		defer func() { err = errors.Join(err, a.Close()) }()
 		return serve(a)
 	}
 	fmt.Fprint(os.Stderr, usage)
@@ -59,19 +61,47 @@ func serve(a *app.App) error {
 	if err != nil {
 		return err
 	}
-	hello, err := json.Marshal(map[string]any{"port": ln.Addr().(*net.TCPAddr).Port, "token": a.Server.Token})
+	hello, err := json.Marshal(map[string]any{"port": ln.Addr().(*net.TCPAddr).Port, "token": a.Server.Token()})
 	if err != nil {
 		return err
 	}
 	fmt.Println(string(hello))
 
-	httpSrv := &http.Server{Handler: a.Server.Handler()}
+	return serveHTTP(ln, a.Server.Handler(), os.Stdin, shutdownGrace)
+}
+
+// shutdownGrace is how long refine waits for requests in flight, such as a
+// slow /stamp, before it drops them.
+const shutdownGrace = 5 * time.Second
+
+// serveHTTP serves h on ln until stdin closes, then shuts down, giving
+// requests in flight grace to finish before it drops them.
+func serveHTTP(ln net.Listener, h http.Handler, stdin io.Reader, grace time.Duration) error {
+	httpSrv := newHTTPServer(h)
+	shutDown := make(chan struct{})
 	go func() {
-		_, _ = io.Copy(io.Discard, os.Stdin)
-		_ = httpSrv.Shutdown(context.Background())
+		defer close(shutDown)
+		_, _ = io.Copy(io.Discard, stdin)
+		ctx, cancel := context.WithTimeout(context.Background(), grace)
+		defer cancel()
+		if err := httpSrv.Shutdown(ctx); err != nil {
+			_ = httpSrv.Close()
+		}
 	}()
-	if err := httpSrv.Serve(ln); err != http.ErrServerClosed {
+	if err := httpSrv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	// Serve returns as soon as Shutdown starts; wait for requests in flight
+	// so the caller doesn't close the store under them.
+	<-shutDown
 	return nil
+}
+
+// newHTTPServer leaves WriteTimeout unset: /stamp makes several network calls
+// and a short one would cut it off.
+func newHTTPServer(h http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           h,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 }
