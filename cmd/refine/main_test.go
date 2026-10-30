@@ -136,3 +136,17 @@ func TestSetupRefusesWhatJiraTurnsDown(t *testing.T) {
 		t.Errorf("config written for a refused account: %v", err)
 	}
 }
+
+type failingCloser struct{ err error }
+
+func (c failingCloser) Close() error { return c.err }
+
+func TestServeAppReturnsCloseError(t *testing.T) {
+	closeErr := errors.New("close the store")
+	open := func() (failingCloser, error) { return failingCloser{closeErr}, nil }
+	serve := func(failingCloser) error { return nil }
+
+	if err := serveApp(open, serve); !errors.Is(err, closeErr) {
+		t.Fatalf("serveApp = %v, want the Close error", err)
+	}
+}

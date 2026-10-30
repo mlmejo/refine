@@ -79,17 +79,27 @@ func (s *Set) Has(key string) bool {
 	return s.keys[key]
 }
 
-// Set hides or unhides key and saves the set when it changes.
+// Set hides or unhides key and saves the set when it changes. When the save
+// fails, the set is left as it was.
 func (s *Set) Set(key string, hide bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.keys[key] == hide {
 		return nil
 	}
+	keys := slices.Collect(maps.Keys(s.keys))
+	if hide {
+		keys = append(keys, key)
+	} else {
+		keys = slices.DeleteFunc(keys, func(k string) bool { return k == key })
+	}
+	if err := s.store.Save(keys); err != nil {
+		return err
+	}
 	if hide {
 		s.keys[key] = true
 	} else {
 		delete(s.keys, key)
 	}
-	return s.store.Save(slices.Collect(maps.Keys(s.keys)))
+	return nil
 }

@@ -46,7 +46,7 @@ func main() {
 	}
 }
 
-func run(args []string) (err error) {
+func run(args []string) error {
 	if len(args) == 0 {
 		fmt.Print(usage)
 		return nil
@@ -57,12 +57,7 @@ func run(args []string) (err error) {
 		fmt.Println("prompts", refine.PromptsVersion())
 		return nil
 	case "serve":
-		a, err := app.Open()
-		if err != nil {
-			return err
-		}
-		defer func() { err = errors.Join(err, a.Close()) }()
-		return serve(a)
+		return serveApp(app.Open, serve)
 	case "setup":
 		path, err := config.Path()
 		if err != nil {
@@ -112,6 +107,17 @@ func setup(in io.Reader, out io.Writer, path string, myself func(site, email, to
 	}
 	_, err = fmt.Fprintln(out, string(hello))
 	return err
+}
+
+// serveApp opens the app, serves it and closes it. A failing Close is
+// returned along with serve's error.
+func serveApp[A io.Closer](open func() (A, error), serve func(A) error) (err error) {
+	var a A
+	if a, err = open(); err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, a.Close()) }()
+	return serve(a)
 }
 
 // serve answers the desktop app until it closes refine's stdin.

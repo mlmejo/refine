@@ -187,7 +187,7 @@ func read(stream io.Reader, repos map[string]string, progress func(Activity)) (*
 					continue
 				}
 				if a, ok := describe(c.Name, c.Input, repos); ok {
-					a.At = time.Now()
+					a.At = time.Now() // only shown in the job log
 					progress(a)
 				}
 			}

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/mlmejo/refine/internal/claude"
-	"github.com/mlmejo/refine/internal/gitsync"
 	"github.com/mlmejo/refine/internal/jira"
 )
 
@@ -24,6 +23,9 @@ type fakeJira struct {
 	writes   []string
 	failOn   string
 	children int
+	// related holds the created children's keys by summary, so a create
+	// reuses one not taken, as Jira's does.
+	related map[string][]string
 }
 
 func (f *fakeJira) Myself(context.Context) (string, error) { return "Dev", nil }
@@ -72,12 +74,22 @@ func (f *fakeJira) Comment(_ context.Context, key, body string) error {
 func (f *fakeJira) Split(_ context.Context, parent, sprint string) (jira.SplitTarget, error) {
 	return jira.SplitTarget{Parent: parent}, nil
 }
-func (f *fakeJira) CreateChild(_ context.Context, t jira.SplitTarget, c jira.NewChild) (string, error) {
+func (f *fakeJira) CreateChild(_ context.Context, t jira.SplitTarget, c jira.NewChild, taken []string) (string, error) {
+	for _, key := range f.related[c.Summary] {
+		if !slices.Contains(taken, key) {
+			return key, nil
+		}
+	}
 	if err := f.record("create " + c.Summary); err != nil {
 		return "", err
 	}
 	f.children++
-	return fmt.Sprintf("GEEK-%d", 900+f.children), nil
+	key := fmt.Sprintf("GEEK-%d", 900+f.children)
+	if f.related == nil {
+		f.related = map[string][]string{}
+	}
+	f.related[c.Summary] = append(f.related[c.Summary], key)
+	return key, nil
 }
 func (f *fakeJira) Relate(_ context.Context, from, to string) error {
 	return f.record("relate " + from + " " + to)
@@ -168,11 +180,11 @@ type fakeGit struct {
 	checkouts []string
 }
 
-func (g *fakeGit) Fetch(_ context.Context, name, dir string) (gitsync.Status, error) {
+func (g *fakeGit) Fetch(_ context.Context, name, dir string) (Synced, error) {
 	if g.fail[name] {
-		return gitsync.Status{Name: name, Dir: dir}, errors.New("could not reach origin")
+		return Synced{Repo: name}, errors.New("could not reach origin")
 	}
-	return gitsync.Status{Name: name, Dir: dir, Branch: "develop", Commit: "abc123" + name, New: 2}, nil
+	return Synced{Repo: name, Branch: "develop", Commit: "abc123" + name, New: 2}, nil
 }
 func (g *fakeGit) Checkout(_ context.Context, repo, commit, dest string) error {
 	g.checkouts = append(g.checkouts, commit+" "+dest)
@@ -739,6 +751,22 @@ func TestStampWritesInOrderAndRetriesFromTheFailure(t *testing.T) {
 	}
 }
 
+func TestStampGivesSplitTicketsWithTheSameTitleTheirOwnKeys(t *testing.T) {
+	s, j, c, st, _ := setup()
+	toResults(t, s, c)
+	r := st.refinements["GEEK-101"]
+	r.Result.Split = append(r.Result.Split, r.Result.Split[0])
+	st.refinements["GEEK-101"] = r
+
+	r, err := s.Stamp(context.Background(), "GEEK-101")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Step != StepStamped || r.Stamp.Children[0] != "GEEK-901" || r.Stamp.Children[1] != "GEEK-902" {
+		t.Fatalf("stamp = %+v, writes = %q", r.Stamp, j.writes)
+	}
+}
+
 // hiddenKeys hides the keys set to true.
 type hiddenKeys map[string]bool
 
@@ -881,6 +909,33 @@ func TestRejectingABlockerFoundInTheCodeCarriesOn(t *testing.T) {
 	}
 }
 
+func TestAskDoesNotListABlockerAddedWhileItRanTwice(t *testing.T) {
+	s, _, c, st, _ := setup()
+	c.answers = []any{
+		map[string]any{"questions": []any{}, "blockers": []map[string]string{{"key": "GEEK-119", "reason": "r"}}},
+	}
+	toQuestions(t, s, c)
+	ctx := context.Background()
+	c.during = func() {
+		r := st.refinements["GEEK-101"]
+		r.Related.Blockers = append(r.Related.Blockers, Blocker{Key: "GEEK-119", FromCode: true})
+		st.refinements["GEEK-101"] = r
+	}
+	r, err := s.Ask(ctx, "GEEK-101", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed int
+	for _, b := range r.Related.Blockers {
+		if b.Key == "GEEK-119" {
+			listed++
+		}
+	}
+	if listed != 1 {
+		t.Fatalf("GEEK-119 listed %d times: %+v", listed, r.Related.Blockers)
+	}
+}
+
 func TestSuggestMatchesTitleAndLabelsToRepoNamesOnce(t *testing.T) {
 	s, j, c, st, _ := setup()
 	toRepos(t, s, c)
@@ -1009,5 +1064,20 @@ func TestACancelledContextStopsTheChange(t *testing.T) {
 	}
 	if _, err := s.Profiles(cancelled); !errors.Is(err, context.Canceled) {
 		t.Errorf("profiles = %v", err)
+	}
+}
+
+func TestListWithNoTicketsEncodesAnEmptyList(t *testing.T) {
+	s, _, _, _, _ := setup()
+	page, err := s.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"rows":[]`) {
+		t.Fatalf("page = %s", data)
 	}
 }

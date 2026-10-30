@@ -76,3 +76,22 @@ func TestSetSkipsTheFileWhenNothingChanges(t *testing.T) {
 		t.Errorf("unhiding an unknown key wrote the file: %v", err)
 	}
 }
+
+func TestSetLeavesKeysAloneWhenSaveFails(t *testing.T) {
+	// A file where the state directory should be fails the save, even as root.
+	state := filepath.Join(t.TempDir(), "state")
+	s, err := Open(filepath.Join(state, "hidden.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(state, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Set("GEEK-1", true); err == nil {
+		t.Fatal("Set saved under a file")
+	}
+	if s.Has("GEEK-1") {
+		t.Error("GEEK-1 hidden in memory though the file never saved it")
+	}
+}

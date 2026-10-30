@@ -413,7 +413,7 @@ func TestCreateChildCreatesALinkedTaskThenSetsPoints(t *testing.T) {
 			StoryPointCriteria:      "Total: Low",
 			Points:                  1,
 		},
-	})
+	}, nil)
 	if err != nil || key != "GEEK-12" {
 		t.Fatalf("key %q err %v", key, err)
 	}
@@ -463,7 +463,7 @@ func TestCreateChildReturnsTheKeyWhenPointsFail(t *testing.T) {
 	}))
 	defer server.Close()
 
-	key, err := New(server.URL, "me", "t").CreateChild(context.Background(), SplitTarget{Parent: "GEEK-1", Project: "GEEK"}, NewChild{Summary: "x"})
+	key, err := New(server.URL, "me", "t").CreateChild(context.Background(), SplitTarget{Parent: "GEEK-1", Project: "GEEK"}, NewChild{Summary: "x"}, nil)
 	if key != "GEEK-12" || err == nil || !strings.Contains(err.Error(), "created GEEK-12, but could not set its points") {
 		t.Errorf("key %q err %v", key, err)
 	}
@@ -520,7 +520,7 @@ func TestCreateChildReusesALinkedTaskWithTheSameSummary(t *testing.T) {
 	server := httptest.NewServer(f)
 	defer server.Close()
 
-	key, err := New(server.URL, "me", "t").CreateChild(context.Background(), SplitTarget{Parent: "GEEK-1", Project: "GEEK"}, NewChild{Summary: "Deleting Book", Refinement: Refinement{Points: 2}})
+	key, err := New(server.URL, "me", "t").CreateChild(context.Background(), SplitTarget{Parent: "GEEK-1", Project: "GEEK"}, NewChild{Summary: "Deleting Book", Refinement: Refinement{Points: 2}}, nil)
 	if err != nil || key != "GEEK-7" {
 		t.Fatalf("key %q err %v", key, err)
 	}
@@ -552,11 +552,11 @@ func TestCreateChildAfterACancelledCreateDoesNotCreateItTwice(t *testing.T) {
 			time.Sleep(time.Millisecond)
 		}
 	}()
-	if key, err := client.CreateChild(ctx, target, child); err == nil {
+	if key, err := client.CreateChild(ctx, target, child, nil); err == nil {
 		t.Fatalf("cancelled create = %q, want an error", key)
 	}
 
-	key, err := client.CreateChild(context.Background(), target, child)
+	key, err := client.CreateChild(context.Background(), target, child, nil)
 	if err != nil || key != "GEEK-11" {
 		t.Fatalf("retry: key %q err %v", key, err)
 	}
@@ -744,5 +744,21 @@ func TestDoReusesTheConnection(t *testing.T) {
 	}
 	if n := conns.Load(); n != 1 {
 		t.Errorf("connections = %d, want 1", n)
+	}
+}
+
+func TestCreateChildSkipsATaskTakenByAnEarlierChild(t *testing.T) {
+	f := &fakeParent{links: []string{
+		`{"type":{"name":"Relates","inward":"relates to","outward":"relates to"},"inwardIssue":{"key":"GEEK-7","fields":{"summary":"Deleting Book","issuetype":{"name":"Task"}}}}`,
+	}}
+	server := httptest.NewServer(f)
+	defer server.Close()
+
+	key, err := New(server.URL, "me", "t").CreateChild(context.Background(), SplitTarget{Parent: "GEEK-1", Project: "GEEK"}, NewChild{Summary: "Deleting Book"}, []string{"GEEK-7"})
+	if err != nil || key != "GEEK-11" {
+		t.Fatalf("key %q err %v, want a new ticket", key, err)
+	}
+	if f.creates != 1 || fmt.Sprint(f.pointsOn) != "[GEEK-11]" {
+		t.Errorf("creates = %d, points on %v", f.creates, f.pointsOn)
 	}
 }

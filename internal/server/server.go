@@ -673,6 +673,7 @@ func (s *Server) startJob(w http.ResponseWriter, r *http.Request) {
 	}
 	s.nextID++
 	ctx, cancel := context.WithCancel(context.Background())
+	// Started is only shown in the app, so the wall clock will do.
 	j := &job{ID: strconv.Itoa(s.nextID), Kind: body.Kind, Key: body.Key, Started: time.Now(), Log: []claude.Activity{}, cancel: cancel, done: make(chan struct{})}
 	s.job = j
 	out := *j

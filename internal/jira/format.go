@@ -82,7 +82,9 @@ func DeployComment(needs []string) string {
 	var out strings.Builder
 	out.WriteString("Deploy needs found while refining this ticket.\n\n")
 	for _, need := range needs {
-		out.WriteString("* " + wiki(need) + "\n")
+		out.WriteString("* ")
+		out.WriteString(wiki(need))
+		out.WriteByte('\n')
 	}
 	return out.String()
 }

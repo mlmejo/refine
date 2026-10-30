@@ -488,9 +488,10 @@ func (c *Client) Split(ctx context.Context, parent, sprint string) (SplitTarget,
 //
 // A Task already related to the parent with the same summary is taken as
 // this child, created by an earlier try whose response never arrived, and
-// only its points are written.
-func (c *Client) CreateChild(ctx context.Context, target SplitTarget, child NewChild) (string, error) {
-	key, err := c.existingChild(ctx, target.Parent, child.Summary)
+// only its points are written. Keys in taken, the parent's other children,
+// are never taken, so two children with the same summary stay apart.
+func (c *Client) CreateChild(ctx context.Context, target SplitTarget, child NewChild, taken []string) (string, error) {
+	key, err := c.existingChild(ctx, target.Parent, child.Summary, taken)
 	if err != nil {
 		return "", err
 	}
@@ -509,8 +510,9 @@ func (c *Client) CreateChild(ctx context.Context, target SplitTarget, child NewC
 	return key, nil
 }
 
-// existingChild finds a Task related to parent with the given summary.
-func (c *Client) existingChild(ctx context.Context, parent, summary string) (string, error) {
+// existingChild finds a Task related to parent with the given summary whose
+// key is not in taken.
+func (c *Client) existingChild(ctx context.Context, parent, summary string, taken []string) (string, error) {
 	var raw struct {
 		Fields struct {
 			IssueLinks []rawLink `json:"issuelinks"`
@@ -520,7 +522,7 @@ func (c *Client) existingChild(ctx context.Context, parent, summary string) (str
 		return "", err
 	}
 	for _, link := range links(raw.Fields.IssueLinks) {
-		if link.Type == "Relates" && link.IssueType == "Task" && link.Summary == summary {
+		if link.Type == "Relates" && link.IssueType == "Task" && link.Summary == summary && !slices.Contains(taken, link.Key) {
 			return link.Key, nil
 		}
 	}

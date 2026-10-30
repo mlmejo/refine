@@ -85,6 +85,7 @@ func (s *Service) Stamp(ctx context.Context, key string) (Refinement, error) {
 		if err != nil {
 			return Refinement{}, err
 		}
+		st.r = r
 		if r.Stamp.Error != "" {
 			return r, nil
 		}
@@ -96,7 +97,8 @@ func (s *Service) Stamp(ctx context.Context, key string) (Refinement, error) {
 }
 
 // stamper runs the actions of one stamp. It keeps the split target, made
-// on the first split ticket, for the ones after it.
+// on the first split ticket, for the ones after it. r is the record as of
+// the last action, so a split ticket sees the keys of those before it.
 type stamper struct {
 	s      *Service
 	r      Refinement
@@ -126,12 +128,18 @@ func (st *stamper) act(ctx context.Context, a Action) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		var taken []string
+		for i, key := range r.Stamp.Children {
+			if i != a.Index {
+				taken = append(taken, key)
+			}
+		}
 		c := res.Split[a.Index]
 		return s.Jira.CreateChild(ctx, target, jira.NewChild{
 			Summary:     c.Title,
 			Description: fmt.Sprintf("Split from %s (%s), which holds the foundation this builds on.", r.Key, r.Summary),
 			Refinement:  fields(c.AcceptanceCriteria, c.TechnicalImplementation, c.Decisions, c.Ratings, c.Points),
-		})
+		}, taken)
 	case ActionLink:
 		return "", s.Jira.Relate(ctx, r.Key, a.Key)
 	case ActionMove:

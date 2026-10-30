@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/mlmejo/refine/internal/claude"
-	"github.com/mlmejo/refine/internal/gitsync"
 	"github.com/mlmejo/refine/internal/hidden"
 	"github.com/mlmejo/refine/internal/jira"
 	"github.com/mlmejo/refine/internal/refine"
@@ -73,7 +72,7 @@ func (fakeJira) Comment(context.Context, string, string) error { return nil }
 func (fakeJira) Split(context.Context, string, string) (jira.SplitTarget, error) {
 	return jira.SplitTarget{}, nil
 }
-func (fakeJira) CreateChild(ctx context.Context, _ jira.SplitTarget, _ jira.NewChild) (string, error) {
+func (fakeJira) CreateChild(ctx context.Context, _ jira.SplitTarget, _ jira.NewChild, _ []string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -98,8 +97,8 @@ func (c slowClaude) Do(ctx context.Context, call claude.Call, into any, progress
 
 type noGit struct{}
 
-func (noGit) Fetch(_ context.Context, name, dir string) (gitsync.Status, error) {
-	return gitsync.Status{Name: name, Dir: dir, Branch: "develop", Commit: "abc"}, nil
+func (noGit) Fetch(_ context.Context, name, dir string) (refine.Synced, error) {
+	return refine.Synced{Repo: name, Branch: "develop", Commit: "abc"}, nil
 }
 func (noGit) Checkout(context.Context, string, string, string) error { return nil }
 

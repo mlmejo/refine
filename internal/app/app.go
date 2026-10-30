@@ -37,8 +37,9 @@ func (a *App) Close() error {
 // git fetches with gitsync and checks commits out with worktree.
 type git struct{}
 
-func (git) Fetch(ctx context.Context, name, dir string) (gitsync.Status, error) {
-	return gitsync.Fetch(ctx, name, dir)
+func (git) Fetch(ctx context.Context, name, dir string) (refine.Synced, error) {
+	st, err := gitsync.Fetch(ctx, name, dir)
+	return refine.Synced{Repo: st.Name, Branch: st.Branch, Commit: st.Commit, New: st.New, Error: st.Error}, err
 }
 
 func (git) Checkout(ctx context.Context, repo, commit, dest string) error {

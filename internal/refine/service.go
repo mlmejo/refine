@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/mlmejo/refine/internal/claude"
-	"github.com/mlmejo/refine/internal/gitsync"
 	"github.com/mlmejo/refine/internal/jira"
 )
 
@@ -27,7 +26,7 @@ type Jira interface {
 	Update(ctx context.Context, key string, r jira.Refinement) error
 	Comment(ctx context.Context, key, body string) error
 	Split(ctx context.Context, parent, sprint string) (jira.SplitTarget, error)
-	CreateChild(ctx context.Context, target jira.SplitTarget, child jira.NewChild) (string, error)
+	CreateChild(ctx context.Context, target jira.SplitTarget, child jira.NewChild, taken []string) (string, error)
 	Relate(ctx context.Context, from, to string) error
 	MoveToSprint(ctx context.Context, key, sprint string) error
 }
@@ -49,7 +48,7 @@ type Store interface {
 
 // Git fetches a repo and checks a commit out for Claude to read.
 type Git interface {
-	Fetch(ctx context.Context, name, dir string) (gitsync.Status, error)
+	Fetch(ctx context.Context, name, dir string) (Synced, error)
 	Checkout(ctx context.Context, repo, commit, dest string) error
 }
 
@@ -184,7 +183,9 @@ func (s *Service) List(ctx context.Context) (Page, error) {
 	if err != nil {
 		return Page{}, err
 	}
-	return Page{User: user, Rows: append(started, rest...), Ready: ready}, nil
+	// Rows is [] rather than null when there are none.
+	rows := append(append(make([]Row, 0, len(started)+len(rest)), started...), rest...)
+	return Page{User: user, Rows: rows, Ready: ready}, nil
 }
 
 // ready lists the developer's tickets in the ready sprint, in Jira's order.
@@ -647,10 +648,11 @@ func (s *Service) Sync(ctx context.Context, key string) (Refinement, error) {
 				return
 			}
 			st, err := s.Git.Fetch(ctx, name, dir)
+			st.Repo = name
 			if err != nil {
 				st.Error = err.Error()
 			}
-			synced[i] = Synced{Repo: name, Branch: st.Branch, Commit: st.Commit, New: st.New, Error: st.Error}
+			synced[i] = st
 		})
 	}
 	wg.Wait()
@@ -764,7 +766,13 @@ func (s *Service) Ask(ctx context.Context, key string, progress func(claude.Acti
 		if run.SessionID != "" {
 			r.QuestionSession = run.SessionID
 		}
-		r.Related.Blockers = append(r.Related.Blockers, found...)
+		// found was checked against r before the run; one added since is
+		// not listed twice.
+		for _, b := range found {
+			if !slices.ContainsFunc(r.Related.Blockers, func(x Blocker) bool { return x.Key == b.Key }) {
+				r.Related.Blockers = append(r.Related.Blockers, b)
+			}
+		}
 		if len(qs) == 0 && len(found) == 0 {
 			r.Step = StepDeploy
 			return nil

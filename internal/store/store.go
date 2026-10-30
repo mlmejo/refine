@@ -87,6 +87,8 @@ func (s *Store) migrate(ctx context.Context, path string) error {
 		return nil
 	}
 	if current > 0 {
+		// Open migrates before a caller can set Now, so the backup is
+		// named by the wall clock.
 		backup := fmt.Sprintf("%s.bak-%s", path, time.Now().Format("20060102-150405"))
 		if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, backup); err != nil {
 			return fmt.Errorf("back up %s before upgrading it: %w", path, err)
@@ -183,12 +185,13 @@ func (s *Store) Profiles(ctx context.Context) (map[string]refine.Profile, error)
 	defer rows.Close()
 	out := map[string]refine.Profile{}
 	for rows.Next() {
-		var repo, data string
+		var repo string
+		var data []byte
 		if err := rows.Scan(&repo, &data); err != nil {
 			return nil, err
 		}
 		var p refine.Profile
-		if err := json.Unmarshal([]byte(data), &p); err != nil {
+		if err := json.Unmarshal(data, &p); err != nil {
 			return nil, fmt.Errorf("decode deploy profile %s: %w", repo, err)
 		}
 		out[p.Repo] = p
@@ -210,8 +213,9 @@ func (s *Store) SaveProfile(ctx context.Context, p refine.Profile) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO deploy_profiles (repo, profile, updated) VALUES (?, ?, ?)
+	// Bytes bind as a BLOB; the CAST keeps profile stored as TEXT.
+	_, err = s.db.ExecContext(ctx, `INSERT INTO deploy_profiles (repo, profile, updated) VALUES (?, CAST(? AS TEXT), ?)
 		ON CONFLICT (repo) DO UPDATE SET profile = excluded.profile, updated = excluded.updated`,
-		p.Repo, string(data), p.Updated.UTC().Format(time.RFC3339Nano))
+		p.Repo, data, p.Updated.UTC().Format(time.RFC3339Nano))
 	return err
 }
