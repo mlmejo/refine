@@ -141,12 +141,13 @@ function useRefineState() {
       setJob(current)
       if (!current.done) return
       if (current.error) {
-        setError(current.key, current.error)
         if (!document.hasFocus()) new Notification(current.key, { body: 'Claude stopped: ' + current.error })
       } else if (!document.hasFocus()) {
         new Notification(current.key, { body: jobNames[current.kind] })
       }
       const view = await load(current.key)
+      // After the reload, since load clears the ticket's error.
+      if (current.error) setError(current.key, current.error)
       void refresh()
       setJob(null)
       if (view && !current.error) next(current.kind, view)

@@ -20,8 +20,15 @@ func Checkout(ctx context.Context, repo, ref, dest string) error {
 	}
 
 	if _, err := os.Stat(filepath.Join(dest, ".git")); err == nil {
-		_, err := gitcmd.Run(ctx, dest, "checkout", "--quiet", "--force", "--detach", commit)
-		return err
+		if same(ctx, repo, dest) {
+			_, err := gitcmd.Run(ctx, dest, "checkout", "--quiet", "--force", "--detach", commit)
+			return err
+		}
+		// A worktree of another clone, say from before the repo moved: it
+		// cannot read this repo's commits, so it is made again.
+		if err := os.RemoveAll(dest); err != nil {
+			return err
+		}
 	}
 
 	if _, err := gitcmd.Run(ctx, repo, "worktree", "prune"); err != nil {
@@ -32,6 +39,22 @@ func Checkout(ctx context.Context, repo, ref, dest string) error {
 	}
 	_, err = gitcmd.Run(ctx, repo, "worktree", "add", "--quiet", "--detach", dest, commit)
 	return err
+}
+
+// same reports whether the worktree at dest shares repo's object store.
+func same(ctx context.Context, repo, dest string) bool {
+	common := func(dir string) string {
+		out, err := gitcmd.Run(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+		if err != nil {
+			return ""
+		}
+		if real, err := filepath.EvalSymlinks(out); err == nil {
+			return real
+		}
+		return out
+	}
+	want := common(repo)
+	return want != "" && common(dest) == want
 }
 
 func resolve(ctx context.Context, repo, ref string) (string, error) {

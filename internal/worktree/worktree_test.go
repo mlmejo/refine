@@ -94,6 +94,28 @@ func TestCheckoutRecreatesDeletedWorktree(t *testing.T) {
 	}
 }
 
+func TestCheckoutReplacesWorktreeOfAnotherRepo(t *testing.T) {
+	ctx := context.Background()
+	old := t.TempDir()
+	run(t, old, "init", "--quiet", "-b", "develop")
+	commit(t, old, "app.txt", "old clone")
+
+	dest := filepath.Join(t.TempDir(), "app")
+	if err := Checkout(ctx, old, "develop", dest); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := t.TempDir()
+	run(t, repo, "init", "--quiet", "-b", "develop")
+	commit(t, repo, "app.txt", "new clone")
+	if err := Checkout(ctx, repo, "develop", dest); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, filepath.Join(dest, "app.txt")); got != "new clone" {
+		t.Errorf("worktree has %q", got)
+	}
+}
+
 func TestCheckoutMissingBranch(t *testing.T) {
 	repo := t.TempDir()
 	run(t, repo, "init", "--quiet", "-b", "main")
