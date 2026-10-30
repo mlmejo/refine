@@ -96,6 +96,8 @@ export type Result = {
   split: Child[] | null
   split_reason?: string
   deploy_needs: string[] | null
+  merged?: boolean
+  edited?: boolean
 }
 
 export type Stamping = {
@@ -147,7 +149,7 @@ export type View = {
 
 export type Activity = { verb: string; what: string; at: string }
 
-export type JobKind = 'search' | 'ask' | 'deploy' | 'generate' | 'rewrite'
+export type JobKind = 'search' | 'ask' | 'deploy' | 'generate' | 'rewrite' | 'merge'
 
 // FormatField names a field whose rules the developer can upload:
 // Acceptance Criteria or Technical Implementation.

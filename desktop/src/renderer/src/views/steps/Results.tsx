@@ -15,12 +15,12 @@ const rows: { key: keyof Ratings; label: string }[] = [
 const value: Record<string, number> = { Low: 1, Medium: 2, High: 3, 'N/A': 0 }
 
 // score works out the points as refine does: the average of the five
-// ratings, rounded.
-export function score(r: Ratings): { points: number; average: number } | undefined {
+// ratings, rounded, two more for a merged ticket.
+export function score(r: Ratings, merged = false): { points: number; average: number } | undefined {
   const all = rows.map(({ key }) => r[key])
   if (all.some((v, i) => !(v in value) || (v === 'N/A' && rows[i].key !== 'testing'))) return undefined
   const average = all.reduce((sum, v) => sum + value[v], 0) / 5
-  return { points: Math.round(average), average }
+  return { points: Math.round(average) + (merged ? 2 : 0), average }
 }
 
 // filesText writes a repo's files one per line, new ones marked.
@@ -182,6 +182,7 @@ export function Results({ view, readOnly }: { view: View; readOnly: boolean }) {
   const [result, setResult] = useState<Result>(() => r.result!)
   const [saved, setSaved] = useState(true)
   const [stamping, setStamping] = useState(!!r.stamp.error)
+  const [merging, setMerging] = useState(false)
   // slam counts the stamps landed here; each one animates the seal in.
   const [slam, setSlam] = useState(0)
   const timer = useRef<number>(undefined)
@@ -191,7 +192,14 @@ export function Results({ view, readOnly }: { view: View; readOnly: boolean }) {
     void refine.run('rewrite', key)
   }
 
+  const merge = async () => {
+    setMerging(false)
+    await flush()
+    void refine.run('merge', key)
+  }
+
   const change = (next: Result) => {
+    next = { ...next, edited: true }
     setResult(next)
     setSaved(false)
     window.clearTimeout(timer.current)
@@ -225,7 +233,7 @@ export function Results({ view, readOnly }: { view: View; readOnly: boolean }) {
     return () => window.removeEventListener('keydown', onKey)
   })
 
-  const s = score(result.ratings)
+  const s = score(result.ratings, result.merged)
   const split = result.split ?? []
   const repos = result.technical_implementation ?? []
 
@@ -238,15 +246,26 @@ export function Results({ view, readOnly }: { view: View; readOnly: boolean }) {
             <div className="page-main">
               <section className={`split-card${split.length ? ' is-split' : ''}`} aria-label="Split">
                 <div className="section-head">
-                  <h2>{split.length ? `Split into ${split.length + 1} tickets` : 'Not split'}</h2>
+                  <h2>{split.length ? `Split into ${split.length + 1} tickets` : result.merged ? 'Merged into one ticket' : 'Not split'}</h2>
                   {split.length > 0 && <span className="chip accent">{split.length} new</span>}
+                  {split.length > 0 && !locked && (
+                    <button
+                      className="btn"
+                      style={{ marginLeft: 'auto' }}
+                      disabled={!!refine.pending}
+                      title="Writes up the whole ticket again as one, worth two more points. There is no going back short of generating again."
+                      onClick={() => (result.edited ? setMerging(true) : void merge())}
+                    >
+                      Merge tickets
+                    </button>
+                  )}
                 </div>
-                {result.split_reason && <p className="split-reason">{result.split_reason}</p>}
+                {result.split_reason && !result.merged && <p className="split-reason">{result.split_reason}</p>}
                 <div className="row">
                   <span className="mono muted" style={{ width: 82 }}>
                     {key}
                   </span>
-                  <span className="small">{split.length ? 'keeps the first slice' : 'is one actionable ticket'}</span>
+                  <span className="small">{split.length ? 'keeps the first slice' : result.merged ? 'holds all the work' : 'is one actionable ticket'}</span>
                 </div>
                 {split.map((c, i) => (
                   <div key={i} className="stack" style={{ gap: 2 }}>
@@ -330,7 +349,7 @@ export function Results({ view, readOnly }: { view: View; readOnly: boolean }) {
                 <div className="section-head">
                   <h2>Story points</h2>
                   <span style={{ fontWeight: 500 }}>{s ? `${s.points} point${s.points === 1 ? '' : 's'}` : 'Not rated'}</span>
-                  {s && <span className="muted small">average {s.average.toFixed(1)}, worked out from the ratings</span>}
+                  {s && <span className="muted small">average {s.average.toFixed(1)}, worked out from the ratings{result.merged ? ', merged ticket' : ''}</span>}
                 </div>
                 <div className="ratings">
                   {rows.map(({ key: dim, label }) => (
@@ -424,6 +443,26 @@ export function Results({ view, readOnly }: { view: View; readOnly: boolean }) {
             Review and stamp <kbd>⌘S</kbd>
           </button>
         </footer>
+      )}
+      {merging && (
+        <div className="overlay" onClick={() => setMerging(false)}>
+          <section role="dialog" aria-labelledby="merge-title" className="dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="dialog-head">
+              <h2 id="merge-title">Merge {key} into one ticket</h2>
+              <p className="muted small" style={{ margin: 0 }}>
+                Merging discards your edits. Merge?
+              </p>
+            </div>
+            <div className="dialog-foot">
+              <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setMerging(false)}>
+                Cancel
+              </button>
+              <button className="btn primary" onClick={() => void merge()}>
+                Merge
+              </button>
+            </div>
+          </section>
+        </div>
       )}
       {stamping && <StampDialog view={view} onClose={() => setStamping(false)} onStamped={() => setSlam((n) => n + 1)} />}
     </>

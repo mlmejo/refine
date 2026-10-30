@@ -237,6 +237,11 @@ type Result struct {
 	Split                   []Child     `json:"split"`
 	SplitReason             string      `json:"split_reason"`
 	DeployNeeds             []string    `json:"deploy_needs"`
+	// Merged is set when the developer merged the split tickets into this
+	// one; it is worth two more points.
+	Merged bool `json:"merged,omitempty"`
+	// Edited is set once the developer edits the result.
+	Edited bool `json:"edited,omitempty"`
 }
 
 // Child is a split ticket created next to the original.
@@ -317,9 +322,14 @@ func (r Ratings) Rows() [][2]string {
 	}
 }
 
-// Scored is the result with every points figure worked out from its ratings.
+// Scored is the result with every points figure worked out from its
+// ratings, two more for a merged ticket.
 func (r Result) Scored() Result {
-	r.Points, _, _ = r.Ratings.Score()
+	points, _, ok := r.Ratings.Score()
+	if ok && r.Merged {
+		points += 2
+	}
+	r.Points = points
 	split := make([]Child, len(r.Split))
 	for i, c := range r.Split {
 		c.Points, _, _ = c.Ratings.Score()

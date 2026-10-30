@@ -961,47 +961,88 @@ func (s *Service) Generate(ctx context.Context, key string, progress func(claude
 			return Refinement{}, err
 		}
 	}
-	t, err := s.Jira.Ticket(ctx, key)
+	result, run, err := s.writeUp(ctx, key, r, splitRules, progress)
 	if err != nil {
 		return Refinement{}, err
 	}
-	blockers, err := s.blockers(ctx, r)
-	if err != nil {
-		return Refinement{}, err
-	}
-	profiles, err := s.Store.Profiles(ctx)
-	if err != nil {
-		return Refinement{}, err
-	}
-	ac, err := s.Format(FormatAC)
-	if err != nil {
-		return Refinement{}, err
-	}
-	ti, err := s.Format(FormatTI)
-	if err != nil {
-		return Refinement{}, err
-	}
-	dirs, err := s.checkout(ctx, r)
-	if err != nil {
-		return Refinement{}, err
-	}
-	var result Result
-	run, err := s.Claude.Do(ctx, claude.Call{
-		Prompt: generatePrompt(t, blockers, r, dirs, profiles),
-		Rules:  withWriteup(generateText, ac, ti),
-		Schema: generateSchema,
-		Repos:  dirs,
-	}, &result, progress)
-	if err != nil {
-		return Refinement{}, err
-	}
-	result = tidy(result).Scored()
 	return s.update(ctx, key, func(r *Refinement) error {
 		r.CostUSD += run.CostUSD
 		r.Result = &result
 		r.Step = StepResults
 		return nil
 	})
+}
+
+// Merge writes up the ticket again as one, in place of its split tickets.
+// A merged ticket is worth two more points. There is no going back short of
+// generating again.
+func (s *Service) Merge(ctx context.Context, key string, progress func(claude.Activity)) (Refinement, error) {
+	r, ok, err := s.Store.Load(ctx, key)
+	if err != nil {
+		return Refinement{}, err
+	}
+	mergeable := func(r Refinement) bool {
+		return r.Step == StepResults && r.Result != nil && len(r.Result.Split) > 0 && len(r.Stamp.Done) == 0
+	}
+	if !ok || !mergeable(r) {
+		return Refinement{}, fmt.Errorf("merge: %w", ErrStep)
+	}
+	result, run, err := s.writeUp(ctx, key, r, mergeRules, progress)
+	if err != nil {
+		return Refinement{}, err
+	}
+	result.Merged = true
+	result.Split = []Child{}
+	result.SplitReason = ""
+	result = result.Scored()
+	return s.update(ctx, key, func(r *Refinement) error {
+		if !mergeable(*r) {
+			return fmt.Errorf("merge: %w", ErrStep)
+		}
+		r.CostUSD += run.CostUSD
+		r.Result = &result
+		return nil
+	})
+}
+
+// writeUp asks Claude for the ticket's fields in a fresh session, under the
+// splitting rules given.
+func (s *Service) writeUp(ctx context.Context, key string, r Refinement, splitting string, progress func(claude.Activity)) (Result, claude.Run, error) {
+	t, err := s.Jira.Ticket(ctx, key)
+	if err != nil {
+		return Result{}, claude.Run{}, err
+	}
+	blockers, err := s.blockers(ctx, r)
+	if err != nil {
+		return Result{}, claude.Run{}, err
+	}
+	profiles, err := s.Store.Profiles(ctx)
+	if err != nil {
+		return Result{}, claude.Run{}, err
+	}
+	ac, err := s.Format(FormatAC)
+	if err != nil {
+		return Result{}, claude.Run{}, err
+	}
+	ti, err := s.Format(FormatTI)
+	if err != nil {
+		return Result{}, claude.Run{}, err
+	}
+	dirs, err := s.checkout(ctx, r)
+	if err != nil {
+		return Result{}, claude.Run{}, err
+	}
+	var result Result
+	run, err := s.Claude.Do(ctx, claude.Call{
+		Prompt: generatePrompt(t, blockers, r, dirs, profiles),
+		Rules:  withSplitting(withWriteup(generateText, ac, ti), splitting),
+		Schema: generateSchema,
+		Repos:  dirs,
+	}, &result, progress)
+	if err != nil {
+		return Result{}, claude.Run{}, err
+	}
+	return tidy(result).Scored(), run, nil
 }
 
 // FormatPath is the file of the developer's rules for a field, or empty
@@ -1173,6 +1214,7 @@ func (s *Service) Edit(ctx context.Context, key string, edited Result) (Refineme
 		next.Decisions = edited.Decisions
 		next.Ratings = edited.Ratings
 		next.DeployNeeds = edited.DeployNeeds
+		next.Edited = true
 		for i := range next.Split {
 			if i < len(edited.Split) && strings.TrimSpace(edited.Split[i].Title) != "" {
 				next.Split[i].Title = strings.TrimSpace(edited.Split[i].Title)

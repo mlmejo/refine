@@ -46,6 +46,12 @@ var generateText string
 //go:embed prompts/generate.schema.json
 var generateSchema string
 
+//go:embed prompts/split.md
+var splitRules string
+
+//go:embed prompts/merge.md
+var mergeRules string
+
 //go:embed prompts/rewrite.md
 var rewriteText string
 
@@ -89,11 +95,17 @@ func withWriteup(rules, ac, ti string) string {
 	return withShared(rules)
 }
 
+// withSplitting puts the splitting rules, split or merge, in place of
+// their marker.
+func withSplitting(rules, splitting string) string {
+	return strings.Replace(rules, "{{splitting}}\n", strings.TrimRight(splitting, "\n")+"\n", 1)
+}
+
 // PromptsVersion fingerprints every rule and schema Claude is given, so a
 // refinement can be traced to the prompts that made it.
 func PromptsVersion() string {
 	h := sha256.New()
-	for _, part := range []string{relatedRules, relatedSchema, suggestRules, suggestSchema, questionsRules, questionsSchema, deployRules, deploySchema, generateText, generateSchema, rewriteText, rewriteSchema, defaultAC, defaultTI} {
+	for _, part := range []string{relatedRules, relatedSchema, suggestRules, suggestSchema, questionsRules, questionsSchema, deployRules, deploySchema, generateText, generateSchema, splitRules, mergeRules, rewriteText, rewriteSchema, defaultAC, defaultTI} {
 		h.Write([]byte(part))
 		h.Write([]byte{0})
 	}

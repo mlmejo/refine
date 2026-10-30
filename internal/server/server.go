@@ -537,6 +537,7 @@ const (
 	kindDeploy   jobKind = "deploy"
 	kindGenerate jobKind = "generate"
 	kindRewrite  jobKind = "rewrite"
+	kindMerge    jobKind = "merge"
 )
 
 // Close cancels the running job and waits for it to end, so its Claude run
@@ -646,6 +647,11 @@ func (s *Server) startJob(w http.ResponseWriter, r *http.Request) {
 	case kindRewrite:
 		work = func(ctx context.Context, p func(claude.Activity)) error {
 			_, err := s.service.Rewrite(ctx, body.Key, p)
+			return err
+		}
+	case kindMerge:
+		work = func(ctx context.Context, p func(claude.Activity)) error {
+			_, err := s.service.Merge(ctx, body.Key, p)
 			return err
 		}
 	default:

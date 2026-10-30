@@ -593,7 +593,76 @@ func TestEditKeepsPointsInStepWithTheRatings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Result.Points != 2 || r.Result.Split[0].Title != "Refunds - Status and history" || r.Result.Split[0].Points != 1 {
+	if r.Result.Points != 2 || r.Result.Split[0].Title != "Refunds - Status and history" || r.Result.Split[0].Points != 1 || !r.Result.Edited {
+		t.Fatalf("edited = %+v", r.Result)
+	}
+}
+
+// merged is Claude's write-up of the whole ticket as one, rated Medium
+// throughout; the split it returns is ignored.
+var merged = map[string]any{
+	"acceptance_criteria":      []string{"Support can refund a payment and see its status."},
+	"technical_implementation": []any{},
+	"ratings":                  map[string]string{"novelty": "Medium", "risk": "Medium", "dependency": "Medium", "testing": "Medium", "deployment": "Medium"},
+	"split":                    []map[string]any{{"title": "Refunds - Status"}},
+	"split_reason":             "One ticket covers it.",
+	"deploy_needs":             []string{"Run the refunds migration"},
+}
+
+func TestMergeWritesUpOneTicketWorthTwoMorePoints(t *testing.T) {
+	ctx := context.Background()
+	s, _, c, _, _ := setup()
+	r := toResults(t, s, c)
+	if _, err := s.Edit(ctx, "GEEK-101", *r.Result); err != nil {
+		t.Fatal(err)
+	}
+	c.answers = []any{merged}
+	r, err := s.Merge(ctx, "GEEK-101", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := c.calls[len(c.calls)-1]
+	if strings.Contains(call.Rules, "Split relentlessly") || !strings.Contains(call.Rules, "Do not split") || call.Session != "" {
+		t.Fatalf("merge rules = %s", call.Rules)
+	}
+	res := r.Result
+	if !res.Merged || res.Edited || len(res.Split) != 0 || res.Points != 4 ||
+		!slices.Equal(res.AcceptanceCriteria, []string{"Support can refund a payment and see its status."}) {
+		t.Fatalf("merged = %+v", res)
+	}
+	if _, err := s.Merge(ctx, "GEEK-101", nil); !errors.Is(err, ErrStep) {
+		t.Fatalf("merged a ticket with no split: %v", err)
+	}
+}
+
+func TestMergeRefusesOnceStampingStarted(t *testing.T) {
+	s, _, c, st, _ := setup()
+	toResults(t, s, c)
+	r := st.refinements["GEEK-101"]
+	r.Stamp.Done = []string{"write"}
+	st.refinements["GEEK-101"] = r
+	if _, err := s.Merge(context.Background(), "GEEK-101", nil); !errors.Is(err, ErrStep) {
+		t.Fatalf("merged mid-stamp: %v", err)
+	}
+}
+
+func TestEditKeepsAMergedTicketTwoPointsUp(t *testing.T) {
+	ctx := context.Background()
+	s, _, c, _, _ := setup()
+	toResults(t, s, c)
+	c.answers = []any{merged}
+	r, err := s.Merge(ctx, "GEEK-101", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := *r.Result
+	edited.Ratings = Ratings{Novelty: "High", Risk: "High", Dependency: "High", Testing: "High", Deployment: "High"}
+	edited.Merged = false
+	r, err = s.Edit(ctx, "GEEK-101", edited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Result.Merged || r.Result.Points != 5 {
 		t.Fatalf("edited = %+v", r.Result)
 	}
 }
