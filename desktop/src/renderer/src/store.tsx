@@ -104,6 +104,10 @@ function useRefineState() {
         setJob(await api.startJob(kind, key, explanation))
       } catch (err) {
         setError(key, (err as Error).message)
+        // A run the app lost track of is shown again, so it can be waited
+        // on or cancelled.
+        const current = await api.job().catch(() => null)
+        if (current && !current.done) setJob(current)
       }
     },
     [setError]
@@ -129,17 +133,29 @@ function useRefineState() {
     [run]
   )
 
+  // finished is the last job whose end was handled, so a tick still in
+  // flight from an older interval does not handle it again.
+  const finished = useRef<string>(undefined)
+
   // Poll the running job; when it finishes, reload its ticket.
   useEffect(() => {
     if (!job || job.done) return
     const timer = window.setInterval(async () => {
-      const current = await api.job().catch(() => null)
-      if (!current || current.id !== job.id) {
-        setJob(null)
+      let current: Job | null
+      try {
+        current = await api.job()
+      } catch {
+        // A failed poll is tried again on the next tick.
         return
       }
+      if (!current || current.id !== job.id) {
+        setJob(current && !current.done ? current : null)
+        return
+      }
+      if (current.done && finished.current === current.id) return
       setJob(current)
       if (!current.done) return
+      finished.current = current.id
       if (current.error) {
         if (!document.hasFocus()) new Notification(current.key, { body: 'Claude stopped: ' + current.error })
       } else if (!document.hasFocus()) {
@@ -149,7 +165,8 @@ function useRefineState() {
       // After the reload, since load clears the ticket's error.
       if (current.error) setError(current.key, current.error)
       void refresh()
-      setJob(null)
+      // Only this job is cleared: the next one may have started meanwhile.
+      setJob((j) => (j?.id === current.id ? null : j))
       if (view && !current.error) next(current.kind, view)
     }, 1000)
     return () => window.clearInterval(timer)
